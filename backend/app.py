@@ -6,19 +6,24 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import media
+from . import media, storage
 from .database import init_db
-from .routers import auth, configs, creations
+from .routers import auth, configs, creations, styles
 from .schemas import HealthOut
 from .services.pipeline import recover_interrupted_creations, start_sweeper
 from .settings import settings
+from .style_presets import seed_default_styles
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    storage.assert_ready()
     init_db()
+    seeded = seed_default_styles()
+    if seeded:
+        logger.info("seeded %s default style presets", seeded)
     media.ensure_dirs()
     recovered = recover_interrupted_creations()
     if recovered["resumed"] or recovered["failed"]:
@@ -46,6 +51,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix="/api")
     app.include_router(configs.router, prefix="/api")
     app.include_router(creations.router, prefix="/api")
+    app.include_router(styles.router, prefix="/api")
 
     @app.get("/api/health", response_model=HealthOut)
     def health():

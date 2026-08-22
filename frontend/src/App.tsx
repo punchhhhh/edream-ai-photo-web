@@ -10,10 +10,11 @@ import {
   getCreation,
   listConfigs,
   listCreations,
+  listStyles,
   logout,
   uploadImage,
 } from './api'
-import { STATUS_TEXT, STYLE_OPTIONS, type AuthUser, type Creation, type ImageSource, type ModelConfig } from './types'
+import { STATUS_TEXT, type AuthUser, type Creation, type ImageSource, type ModelConfig, type StylePreset } from './types'
 import { downloadName, notify, requestNotifyPermission } from './utils'
 
 const CONFIG_KEY = 'edream_config_id'
@@ -29,6 +30,7 @@ const DURATIONS = [4, 5, 10]
 export default function App() {
   const [me, setMe] = useState<AuthUser | null>(null)
   const [configs, setConfigs] = useState<ModelConfig[]>([])
+  const [styles, setStyles] = useState<StylePreset[]>([])
   const [configId, setConfigId] = useState<number | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -82,6 +84,8 @@ export default function App() {
 
   useEffect(() => {
     refreshConfigs().catch((e) => setError((e as Error).message))
+    // 风格预设从后端拉取(启动时幂等播种,可改库自定义)
+    listStyles().then(setStyles).catch(() => {})
   }, [refreshConfigs])
 
   useEffect(() => {
@@ -253,6 +257,14 @@ export default function App() {
     setImage(null)
   }
 
+  const selectStyle = (s: StylePreset) => {
+    setStyle(style === s.name ? '' : s.name)
+    // 联动建议画幅(还没生成图片时才覆盖用户选择)
+    if (style !== s.name && !image && IMAGE_SIZES.some((x) => x.value === s.image_size)) {
+      setImageSize(s.image_size)
+    }
+  }
+
   const generating = creation?.status === 'pending' || creation?.status === 'generating_video'
   const stepDone = (n: number) =>
     (n <= 1 && text.trim().length > 0) ||
@@ -372,11 +384,16 @@ export default function App() {
         {section(
           2,
           '选择风格',
-          '决定画面整体调性,会传给 AI 拓展与视频模型',
+          '决定画面整体调性:风格要点会融入 AI 拓展,负向提示词在生成视频时生效',
           <div className="chips">
-            {STYLE_OPTIONS.map((s) => (
-              <button key={s} className={`chip ${style === s ? 'active' : ''}`} onClick={() => setStyle(style === s ? '' : s)}>
-                {s}
+            {styles.map((s) => (
+              <button
+                key={s.id}
+                className={`chip ${style === s.name ? 'active' : ''}`}
+                title={s.description}
+                onClick={() => selectStyle(s)}
+              >
+                {s.name}
               </button>
             ))}
           </div>,

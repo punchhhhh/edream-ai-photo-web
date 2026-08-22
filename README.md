@@ -20,7 +20,8 @@ backend/                 后端
 ├── models.py            users / oauth_states / oauth_sessions / model_configs / creations
 ├── auth.py              JWT 验证(JWKS)+ 会话签发/校验
 ├── schemas.py           Pydantic 请求/响应模型(密钥只回传掩码)
-├── media.py             图片/视频文件落盘辅助
+├── media.py             本地媒体落盘/魔数嗅探/路径白名单
+├── storage.py           资产存储层(本地磁盘 / 腾讯云 COS,按用户组织 key)
 ├── routers/
 │   ├── auth.py          登录/回调/登出/当前用户(/api/auth/*)
 │   ├── configs.py       模型配置 CRUD(/api/configs,按用户隔离)
@@ -42,6 +43,7 @@ main.py                  uvicorn 启动入口
 | `oauth_states` | 授权码流程的一次性 state(10 分钟有效,防 CSRF/重放) |
 | `oauth_sessions` | 服务端会话,Cookie 存原始 token、库里只存 sha256 哈希,默认 7 天 |
 | `model_configs` | 网关配置,`user_id` 外键级联删除;`api_key` 仅服务端使用 |
+| `style_presets` | 风格预设(全局内容表):结构化画面语言描述 + 负向提示词 + 建议画幅,启动时幂等播种默认风格,可改库自定义 |
 | `creations` | 生成任务记录;`user_id` 外键 + **部分唯一索引**:`(user_id) WHERE status IN ('pending','generating_video')`,数据库层保证每用户同时只有一个生成中任务 |
 
 ## 快速开始
@@ -91,6 +93,27 @@ npm run dev                       # localhost:5173(已代理 /api、/media 到 8
 
 可建多套配置,顶栏下拉切换;生成记录会快照当时的配置与模型名。
 
+## 资产存储(腾讯云 COS)
+
+生成的图片、上传的参考图、成片视频统一作为**资产**管理:
+
+- 对象按用户组织:key 为 `{COS_PREFIX}/users/{用户id}/{images|uploads|videos}/{文件}`,数据库只存 key,不存任何外部地址
+- 桶设为**私有读写**;用户每次访问列表/详情时,后端实时生成**临时预签名链接**(默认 1 小时过期,`COS_PRESIGN_EXPIRES_SECONDS` 可调),链接不落库
+- 换后端零迁移:数据库里只有 key,`STORAGE_BACKEND` 在 local/cos 间切换即生效(历史 `{kind}/{文件}` 旧布局同样兼容)
+- 未配置 COS 时默认落本地磁盘(`MEDIA_DIR`,经 `/api/media` 静态服务),开发与测试零依赖
+- 启动时校验:`STORAGE_BACKEND=cos` 但配置不全或未安装 SDK(`pip install '.[cos]'`)直接启动失败
+
+**COS 控制台需要做的一件事**:给桶配置跨域访问(CORS),允许来源填前端域名(开发期 `http://localhost:5173`),方法 `GET`——浏览器剪辑台(FFmpeg.wasm)需要直接 fetch 预签名链接拉取素材。
+
+## 风格预设
+
+风格不是简单的一个词,而是 `style_presets` 表里的结构化预设:
+
+- **画面语言要点**(description):机位/镜头、光影、色调、质感、氛围的完整描述,AI 拓展时拼进 prompt,要求 LLM 融入画面描述——风格的正向影响在拓展文本里固化,后续生图/生视频都继承
+- **负向提示词**(negative_prompt):视频生成时随请求传给网关(可灵/Vidu 等支持 `negative_prompt` 的渠道生效;不识别的网关返回参数错误时由降级重试自动剔除)
+- **建议画幅**(image_size):前端选中风格时联动首帧画幅(如国风水墨默认方形)
+- 默认 10 个风格(电影质感/动漫/3D 卡通/赛博朋克/国风水墨等)启动时幂等播种,直接改库即可自定义、调序、下线(`is_active`)
+
 ## 视频生成两种接口模式
 
 - **new-api 任务式**(默认):`POST /v1/video/generations` 提交(图生视频传 `image_url`,本地图片自动转 base64 data URL),轮询 `GET /v1/video/generations/{task_id}`,完成后下载视频落盘。
@@ -109,7 +132,8 @@ npm run dev                       # localhost:5173(已代理 /api、/media 到 8
 | GET/POST | `/api/configs` | 配置列表 / 新增(响应只有 `api_key_masked`) |
 | PUT/DELETE | `/api/configs/{id}` | 编辑(密钥留空=保留)/ 删除 |
 | POST | `/api/configs/test` | 测试连接:传 `config_id` 用存储密钥测,或表单里填地址+密钥 |
-| POST | `/api/expand` | AI 文本拓展 |
+| GET | `/api/styles` | 风格预设列表(创作台风格选择数据源) |
+| POST | `/api/expand` | AI 文本拓展(命中风格预设时拼入画面语言要点) |
 | POST | `/api/generate-image` | 文生图(首帧) |
 | POST | `/api/upload` | 上传参考图 |
 | POST | `/api/creations` | 提交视频生成(后台线程执行);**同用户已有生成中任务时返回 409** |
@@ -157,6 +181,11 @@ npm run dev                       # localhost:5173(已代理 /api、/media 到 8
 | `VIDEO_POLL_INTERVAL` | `5` | 视频任务轮询间隔(秒) |
 | `VIDEO_TIMEOUT_SECONDS` | `900` | 视频任务超时(秒) |
 | `MAX_UPLOAD_MB` | `20` | 参考图大小上限 |
+| `STORAGE_BACKEND` | `local` | `local` = 本地磁盘;`cos` = 腾讯云 COS(需 `pip install '.[cos]'`) |
+| `COS_REGION` / `COS_BUCKET` | 空 | COS 地域(如 `ap-guangzhou`)/ 存储桶完整名称(含 APPID) |
+| `COS_SECRET_ID` / `COS_SECRET_KEY` | 空 | COS 密钥(建议使用仅授权该桶的子账号) |
+| `COS_PREFIX` | `edream` | 对象 key 统一前缀,留空表示不加 |
+| `COS_PRESIGN_EXPIRES_SECONDS` | `3600` | 临时预签名链接有效期(秒) |
 | `AUTH_MODE` | `jwt` | `jwt` = Casdoor OAuth;`dev` = 本地免登 |
 | `OAUTH_ISSUER` / `OAUTH_AUDIENCE` | 空 | JWT 签发方/受众校验(可选) |
 | `OAUTH_JWKS_URL` | 空 | Casdoor JWKS 地址,如 `https://<casdoor>/.well-known/jwks` |

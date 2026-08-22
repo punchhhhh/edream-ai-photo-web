@@ -42,18 +42,16 @@ export interface Creation {
 
 export type ImageSource = 'none' | 'generate' | 'upload'
 
-export const STYLE_OPTIONS = [
-  '电影质感',
-  '动漫风格',
-  '3D 卡通',
-  '写实纪录',
-  '赛博朋克',
-  '水彩插画',
-  '复古胶片',
-  '奇幻梦境',
-  '国风水墨',
-  '极简主义',
-]
+export interface StylePreset {
+  id: number
+  name: string
+  /** 画面语言要点,拼进 AI 拓展 prompt(悬停可看) */
+  description: string
+  negative_prompt: string
+  /** 该风格建议的首帧画幅 */
+  image_size: string
+  sort_order: number
+}
 
 export const STATUS_TEXT: Record<string, string> = {
   pending: '排队中',
