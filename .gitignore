@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+media/
+node_modules/
+frontend/dist/
+frontend/public/ffmpeg/
+gui-test-screenshots/
+.playwright-mcp/
+.idea/
+.zcode/
+.pytest_cache/
+*.egg-info/
+.DS_Store
+test-ref.png
