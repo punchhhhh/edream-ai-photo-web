@@ -1,0 +1,105 @@
+import type { AuthUser, Creation, ModelConfig } from './types'
+
+// 配置表单里用户本次输入的内容;编辑已存配置时 api_key 留空表示保留原密钥
+export type ConfigForm = Omit<ModelConfig, 'id' | 'api_key_masked' | 'created_at' | 'updated_at'> & {
+  api_key: string
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const isJsonBody = typeof init?.body === 'string'
+  const res = await fetch(path, {
+    ...init,
+    headers: isJsonBody ? { 'Content-Type': 'application/json', ...init?.headers } : init?.headers,
+  })
+  if (!res.ok) {
+    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      // 会话失效,跳转 OAuth 登录;next 让登录后回到当前页
+      window.location.href = `/api/auth/login?next=${encodeURIComponent(window.location.pathname)}`
+      throw new Error('登录已失效,正在跳转登录…')
+    }
+    let detail = `${res.status} ${res.statusText}`
+    try {
+      const data = await res.json()
+      if (typeof data.detail === 'string') detail = data.detail
+      else if (Array.isArray(data.detail)) detail = data.detail.map((d: any) => d.msg ?? '').join('; ')
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+// ---- 登录 ----
+export const fetchMe = () => request<AuthUser>('/api/auth/me')
+
+export const logout = () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
+
+// ---- 模型配置 ----
+export const listConfigs = () => request<ModelConfig[]>('/api/configs')
+
+export const createConfig = (payload: ConfigForm) =>
+  request<ModelConfig>('/api/configs', { method: 'POST', body: JSON.stringify(payload) })
+
+export const updateConfig = (id: number, payload: ConfigForm) =>
+  request<ModelConfig>(`/api/configs/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+
+export const deleteConfig = (id: number) => request<{ ok: boolean }>(`/api/configs/${id}`, { method: 'DELETE' })
+
+export interface ConfigTestResult {
+  ok: boolean
+  models: string[]
+  found: { chat: boolean | null; image: boolean | null; video: boolean | null }
+  note: string
+}
+
+// 编辑已保存配置且密钥留空时传 configId,由后端用存储的密钥测试,密钥不出库
+export const testConfig = (payload: Partial<ConfigForm> & { config_id?: number | null }) =>
+  request<ConfigTestResult>('/api/configs/test', { method: 'POST', body: JSON.stringify(payload) })
+
+// ---- 创作流程 ----
+export const expandText = (configId: number, text: string, style: string) =>
+  request<{ expanded_prompt: string }>('/api/expand', {
+    method: 'POST',
+    body: JSON.stringify({ config_id: configId, text, style }),
+  })
+
+export const generateImage = (configId: number, prompt: string, size: string) =>
+  request<{ image_path: string; url: string }>('/api/generate-image', {
+    method: 'POST',
+    body: JSON.stringify({ config_id: configId, prompt, size }),
+  })
+
+export const uploadImage = (file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return request<{ image_path: string; url: string }>('/api/upload', { method: 'POST', body: form })
+}
+
+export const createCreation = (payload: {
+  input_text: string
+  style: string
+  expanded_prompt: string
+  image_source: 'none' | 'generated' | 'uploaded'
+  image_path: string | null
+  config_id: number
+  duration: number
+}) => request<Creation>('/api/creations', { method: 'POST', body: JSON.stringify(payload) })
+
+export const listCreations = (limit = 50) => request<Creation[]>(`/api/creations?limit=${limit}`)
+
+export const getCreation = (id: number) => request<Creation>(`/api/creations/${id}`)
+
+export const deleteCreation = (id: number) => request<{ ok: boolean }>(`/api/creations/${id}`, { method: 'DELETE' })
+
+export const saveMergedVideo = (
+  file: Blob,
+  meta: { title: string; sourceIds: number[]; totalDuration: number },
+) => {
+  const form = new FormData()
+  form.append('file', file, 'merged.mp4')
+  form.append('title', meta.title)
+  form.append('source_ids', JSON.stringify(meta.sourceIds))
+  form.append('total_duration', String(meta.totalDuration))
+  return request<Creation>('/api/creations/merged', { method: 'POST', body: form })
+}
