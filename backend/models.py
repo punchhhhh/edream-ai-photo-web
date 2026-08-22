@@ -82,6 +82,32 @@ class ModelConfig(Base):
     )
 
 
+class StylePreset(Base):
+    """风格预设:一段结构化的画面语言描述,影响 AI 拓展与生成参数(负向提示词/建议画幅)。
+
+    全局内容表(非用户数据),启动时幂等播种默认风格;已存在的不覆盖,方便直接改库自定义。
+    """
+
+    __tablename__ = "style_presets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    # 画面语言要点:机位/镜头、光影、色调、质感、氛围,拼进拓展 prompt
+    description: Mapped[str] = mapped_column(Text, default="")
+    # 负向提示词:视频生成时传入(网关/模型不支持时由参数降级重试自动剔除)
+    negative_prompt: Mapped[str] = mapped_column(Text, default="")
+    # 该风格建议的首帧画幅
+    image_size: Mapped[str] = mapped_column(String(20), default="1280x720")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Creation(Base):
     """一次视频生成任务的完整记录。"""
 
@@ -106,9 +132,11 @@ class Creation(Base):
     expanded_prompt: Mapped[str] = mapped_column(Text, default="")
     # none = 纯文生视频;generated = 先生成图片;uploaded = 用户上传参考图;merged = 浏览器合成
     image_source: Mapped[str] = mapped_column(String(20), default="none")
+    # 参考图的存储 key,形如 users/{uid}/uploads|images/xxx.png(历史数据可能是 images|uploads/xxx.png)
     image_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 成片的存储 key,形如 users/{uid}/videos/xxx.mp4
     video_path: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 远端回退地址:本地文件优先(播放地址由 video_path 在输出时推导);仅下载失败时存网关远端 URL
+    # 远端回退地址:本地/对象存储文件优先(播放地址由 video_path 在输出时推导);仅下载失败时存网关远端 URL
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration: Mapped[int] = mapped_column(Integer, default=5)
     # pending / generating_video / completed / failed

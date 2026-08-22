@@ -14,5 +14,9 @@ dependencies = [
     "pyjwt[crypto]>=2.8",
 ]
 
+[project.optional-dependencies]
+# 对象存储后端(STORAGE_BACKEND=cos)需要
+cos = ["cos-python-sdk-v5>=1.9"]
+
 [tool.setuptools]
 packages = ["backend", "backend.routers", "backend.services"]

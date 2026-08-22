@@ -142,6 +142,17 @@ class CreationOut(BaseModel):
     updated_at: datetime
 
 
+class StyleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    description: str
+    negative_prompt: str
+    image_size: str
+    sort_order: int
+
+
 class ConfigTestOut(BaseModel):
     ok: bool
     models: list[str] = []

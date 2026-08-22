@@ -18,6 +18,18 @@ class Settings(BaseSettings):
     # 浏览器合成成片回传的大小上限(多段拼接,比单图宽松)
     max_video_upload_mb: int = 500
 
+    # ---- 资产存储(腾讯云 COS) ----
+    # local = 本地磁盘(MEDIA_DIR,开发/测试零依赖);cos = 腾讯云 COS(私有读写 + 临时预签名链接)
+    storage_backend: str = "local"
+    cos_region: str = ""  # 地域,如 ap-guangzhou
+    cos_bucket: str = ""  # 存储桶完整名称(含 APPID,如 mybucket-1250000000)
+    cos_secret_id: str = ""
+    cos_secret_key: str = ""
+    # 对象 key 统一前缀(多应用共用桶时区分用),留空表示不加
+    cos_prefix: str = "edream"
+    # 临时预签名链接有效期(秒)
+    cos_presign_expires_seconds: int = 3600
+
     # ---- 登录(Casdoor OAuth 授权码模式) ----
     # jwt = 走 Casdoor OAuth;dev = 免 OAuth,直接给 DEV_AUTH_SUB 建会话(本地开发用)
     auth_mode: str = "jwt"

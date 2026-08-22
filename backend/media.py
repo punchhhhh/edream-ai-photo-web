@@ -1,8 +1,10 @@
-"""媒体文件保存/读取辅助。所有产物落在 settings.media_dir 下,相对路径形如 images/xxx.png。"""
+"""媒体文件辅助:魔数嗅探、相对路径白名单、本地原子落盘。
+
+相对路径(存储 key)布局:users/{user_id}/{kind}/{filename};历史数据可能是 {kind}/{filename}。
+本地后端落在 MEDIA_DIR 下经 /api/media 静态服务;对象存储后端见 backend/storage.py。
+"""
 
 import re
-import time
-import uuid
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -10,8 +12,8 @@ from .settings import settings
 
 ALLOWED_IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 
-# 相对路径白名单:仅允许子目录下的单层文件名,从根上拒绝 `..` / 绝对路径等穿越写法
-_SAFE_REL = re.compile(r"(?:images|uploads|videos)/[A-Za-z0-9._-]{1,150}")
+# 相对路径白名单:可选 users/{uid} 前缀 + 三个子目录之一的单层文件名,拒绝 `..`/绝对路径等穿越
+_SAFE_REL = re.compile(r"(?:users/\d{1,10}/)?(?:images|uploads|videos)/[A-Za-z0-9._-]{1,150}")
 
 
 class MediaTooLarge(ValueError):
@@ -40,11 +42,10 @@ def safe_abs_path(rel: str | None) -> Path | None:
     return media_root() / rel if is_safe_rel(rel) else None
 
 
-def save_stream(sub: str, ext: str, chunks: Iterable[bytes], *, max_bytes: int | None = None) -> str:
-    """流式写入并原子落盘(先写 .tmp 再 rename),返回相对路径。大文件不整读进内存。"""
-    ensure_dirs()
-    name = f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{ext}"
-    final = media_root() / sub / name
+def write_rel(rel: str, chunks: Iterable[bytes], *, max_bytes: int | None = None) -> str:
+    """按完整相对路径原子写入本地媒体目录(先写 .tmp 再 rename),返回 rel。"""
+    final = media_root() / rel
+    final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.with_name(final.name + ".tmp")
     size = 0
     try:
@@ -55,28 +56,11 @@ def save_stream(sub: str, ext: str, chunks: Iterable[bytes], *, max_bytes: int |
                     raise MediaTooLarge(str(size))
                 f.write(chunk)
         if size == 0:
-            raise MediaEmpty(sub)
+            raise MediaEmpty(rel)
         tmp.replace(final)
     finally:
         tmp.unlink(missing_ok=True)
-    return f"{sub}/{name}"
-
-
-def _save(sub: str, data: bytes, ext: str) -> str:
-    return save_stream(sub, ext if ext.startswith(".") else f".{ext}", (data,))
-
-
-def save_image(data: bytes, ext: str = ".png") -> str:
-    return _save("images", data, ext)
-
-
-def save_upload(data: bytes, ext: str) -> str:
-    """上传图片落盘;ext 来自魔数嗅探结果,而非可伪造的 Content-Type。"""
-    return _save("uploads", data, ext)
-
-
-def save_video(data: bytes) -> str:
-    return _save("videos", data, ".mp4")
+    return rel
 
 
 def sniff_image(data: bytes) -> str | None:
@@ -98,7 +82,7 @@ def sniff_video(head: bytes) -> bool:
 
 
 def media_url(rel: str | None) -> str | None:
-    """本地产物的访问地址。统一挂在 /api 前缀下,反向代理只需按 /api 一条规则转发。"""
+    """本地后端的产物访问地址。统一挂在 /api 前缀下,反向代理只需按 /api 一条规则转发。"""
     return f"/api/media/{rel}" if rel else None
 
 

@@ -10,14 +10,15 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
-from .. import media
+from .. import media, storage
 from ..auth import aware
 from ..database import SessionLocal
-from ..models import Creation, ModelConfig
+from ..models import Creation, ModelConfig, StylePreset
 from ..settings import settings
 from .ai_client import AICallError, AIClient
 
@@ -25,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 # 视频仍在进行中的状态;同一用户存在这些状态的任务时,后端拒绝新任务
 ACTIVE_STATUSES = ("pending", "generating_video")
+
+# 图生视频时参考图的 MIME 映射(按存储 key 后缀判断)
+IMAGE_MIME_BY_EXT = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
 # 心跳间隔(秒):轮询期间刷新 updated_at,证明线程还活着
 HEARTBEAT_INTERVAL_SECONDS = 30.0
@@ -122,15 +132,28 @@ def _generate_video(session, creation: Creation, *, resume: bool = False) -> Non
     if config is None:
         raise AICallError("模型配置不存在或已被删除,请重新选择配置")
 
-    image_path = None
+    image_bytes = None
+    image_mime = None
     if creation.image_path:
-        image_path = media.safe_abs_path(creation.image_path)
-        if image_path is None:
+        if not media.is_safe_rel(creation.image_path):
             raise AICallError("图片文件路径不合法,请重新生成或上传后再提交")
+        try:
+            # 从存储层(本地磁盘/对象存储)读回参考图字节,转发给网关
+            image_bytes = storage.read(creation.image_path)
+        except FileNotFoundError:
+            raise AICallError("图片文件不存在或已被清理,请重新生成或上传后再提交") from None
+        image_mime = IMAGE_MIME_BY_EXT.get(Path(creation.image_path).suffix.lower(), "image/png")
 
     creation.status = "generating_video"
     creation.error = None
     session.commit()
+
+    # 风格预设的负向提示词(正向画面语言已随拓展文本固化在 expanded_prompt 里)
+    negative_prompt = ""
+    if creation.style:
+        preset = session.scalar(select(StylePreset).where(StylePreset.name == creation.style))
+        if preset is not None:
+            negative_prompt = preset.negative_prompt
 
     def persist_task_id(task_id: str) -> None:
         # 拿到远端任务号立即落库:此后进程重启也能恢复,不浪费已扣费的任务
@@ -155,7 +178,9 @@ def _generate_video(session, creation: Creation, *, resume: bool = False) -> Non
         result = client.run_video(
             creation.video_model,
             creation.expanded_prompt or creation.input_text,
-            image_path=image_path,
+            image_bytes=image_bytes,
+            image_mime=image_mime,
+            negative_prompt=negative_prompt,
             duration=creation.duration,
             poll_interval=settings.video_poll_interval,
             timeout_seconds=settings.video_timeout_seconds,
@@ -168,12 +193,14 @@ def _generate_video(session, creation: Creation, *, resume: bool = False) -> Non
         url = result.get("url")
         content = result.get("content")
         if content:
-            creation.video_path = media.save_video(content)
+            creation.video_path = storage.save_bytes("videos", content, ".mp4", user_id=creation.user_id)
             creation.video_url = None
         elif url:
-            # 优先把远端视频拉回本地,失败则把远端链接存进 video_url 兜底
+            # 优先把远端视频拉回本地存储,失败则把远端链接存进 video_url 兜底
             try:
-                creation.video_path = media.save_video(client.download(url))
+                creation.video_path = storage.save_bytes(
+                    "videos", client.download(url), ".mp4", user_id=creation.user_id
+                )
                 creation.video_url = None
             except Exception:
                 logger.warning("download remote video failed, keep remote url: %s", url, exc_info=True)

@@ -5,9 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import media
+from .. import media, storage
 from ..database import get_db
-from ..models import Creation, ModelConfig, User
+from ..models import Creation, ModelConfig, StylePreset, User
 from ..schemas import CreationIn, CreationOut, ExpandIn, ExpandOut, ImageGenIn, MediaOut
 from ..settings import settings
 from ..services.ai_client import AICallError, AIClient
@@ -37,10 +37,9 @@ def _to_out(creation: Creation) -> CreationOut:
         for c in Creation.__table__.columns
         if c.name in CreationOut.model_fields
     }
-    data["image_url"] = media.media_url(creation.image_path)
-    # 本地文件的播放地址输出时推导,URL 前缀只在 media_url 一处定义;
-    # 列里的 video_url 只作为"远端回退地址"(下载失败时保留网关链接)
-    data["video_url"] = media.media_url(creation.video_path) or creation.video_url
+    data["image_url"] = storage.url(creation.image_path)
+    # 本地/对象存储的播放地址输出时推导;列里的 video_url 只作为"远端回退地址"(下载失败时保留网关链接)
+    data["video_url"] = storage.url(creation.video_path) or creation.video_url
     data.pop("video_path", None)
     return CreationOut(**data)
 
@@ -62,9 +61,17 @@ def expand_text(
     user: User = Depends(get_current_user),
 ):
     config = _get_config(db, user, payload.config_id)
+    # 命中风格预设时,把结构化的画面语言要点一并交给 LLM,而不是只给一个风格词
+    style_description = ""
+    if payload.style:
+        preset = db.scalar(select(StylePreset).where(StylePreset.name == payload.style))
+        if preset is not None:
+            style_description = preset.description
     with AIClient(config.base_url, config.api_key) as client:
         try:
-            expanded = client.expand_prompt(config.chat_model, payload.text, payload.style)
+            expanded = client.expand_prompt(
+                config.chat_model, payload.text, payload.style, style_description=style_description
+            )
         except AICallError as e:
             raise HTTPException(502, str(e)) from e
     return ExpandOut(expanded_prompt=expanded)
@@ -84,8 +91,8 @@ def generate_image(
             data, ext = client.generate_image(config.image_model, payload.prompt, payload.size)
         except AICallError as e:
             raise HTTPException(502, str(e)) from e
-    rel = media.save_image(data, ext)
-    return MediaOut(image_path=rel, url=media.media_url(rel))
+    rel = storage.save_bytes("images", data, ext, user_id=user.id)
+    return MediaOut(image_path=rel, url=storage.url(rel))
 
 
 @router.post("/upload", response_model=MediaOut)
@@ -102,8 +109,8 @@ def upload_image(file: UploadFile = File(...), user: User = Depends(get_current_
     ext = media.sniff_image(data)
     if ext is None:
         raise HTTPException(422, "文件内容不是有效的图片(PNG / JPEG / WebP / GIF)")
-    rel = media.save_upload(data, ext)
-    return MediaOut(image_path=rel, url=media.media_url(rel))
+    rel = storage.save_bytes("uploads", data, ext, user_id=user.id)
+    return MediaOut(image_path=rel, url=storage.url(rel))
 
 
 # ---------------------------------------------------------------- 创作任务
@@ -122,11 +129,10 @@ def create_creation(
     if payload.image_source != "none":
         if not payload.image_path:
             raise HTTPException(422, "选择图片路径时必须先生成或上传图片")
-        image_file = media.safe_abs_path(payload.image_path)
-        if image_file is None:
-            # 只接受本服务生成/上传接口返回的相对路径,拒绝 `..`/绝对路径等穿越写法
+        # 只接受本服务生成/上传接口返回的存储 key,拒绝 `..`/绝对路径等穿越写法
+        if not media.is_safe_rel(payload.image_path):
             raise HTTPException(422, "图片路径不合法")
-        if not image_file.is_file():
+        if not storage.exists(payload.image_path):
             raise HTTPException(422, "图片文件不存在,请重新生成或上传")
 
     # 同一用户同时只允许一个生成中任务:应用层先拦一道
@@ -176,27 +182,21 @@ def create_merged_creation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """接收浏览器端(FFmpeg.wasm)合成好的成片,入库并保存文件(流式落盘,不整读进内存)。"""
+    """接收浏览器端(FFmpeg.wasm)合成好的成片,入库并保存文件(流式,不整读进内存)。"""
     content_type = (file.content_type or "").lower()
     if not content_type.startswith("video/"):
         raise HTTPException(422, "仅支持视频文件")
     limit = settings.max_video_upload_mb * 1024 * 1024
 
-    def video_chunks():
-        first = True
-        while True:
-            chunk = file.file.read(1024 * 1024)
-            if not chunk:
-                break
-            if first:
-                first = False
-                # Content-Type 可伪造,按魔数确认确实是视频再落盘
-                if not media.sniff_video(chunk):
-                    raise HTTPException(422, "文件内容不是有效的视频(mp4/webm)")
-            yield chunk
-
+    # 先读头部按魔数校验(Content-Type 可伪造),再交给存储层(本地流式 / 对象存储直传)
+    head = file.file.read(1024 * 1024)
+    file.file.seek(0)
+    if not head:
+        raise HTTPException(422, "上传的视频为空")
+    if not media.sniff_video(head):
+        raise HTTPException(422, "文件内容不是有效的视频(mp4/webm)")
     try:
-        video_rel = media.save_stream("videos", ".mp4", video_chunks(), max_bytes=limit)
+        video_rel = storage.save_seekable("videos", file.file, ".mp4", user_id=user.id, max_bytes=limit)
     except media.MediaTooLarge:
         raise HTTPException(422, f"合成成片不能超过 {settings.max_video_upload_mb}MB") from None
     except media.MediaEmpty:
@@ -259,6 +259,6 @@ def delete_creation(
     creation = _get_creation(db, user, creation_id)
     db.delete(creation)
     db.commit()
-    media.remove_rel(creation.image_path)
-    media.remove_rel(creation.video_path)
+    storage.delete(creation.image_path)
+    storage.delete(creation.video_path)
     return {"ok": True}

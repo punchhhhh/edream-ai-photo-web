@@ -12,9 +12,7 @@
 
 import base64
 import json
-import mimetypes
 import time
-from pathlib import Path
 from typing import Any, Callable
 
 import httpx
@@ -140,12 +138,14 @@ class AIClient:
 
     # ------------------------------------------------------------ 文本拓展
 
-    def expand_prompt(self, model: str, text: str, style: str = "") -> str:
+    def expand_prompt(self, model: str, text: str, style: str = "", style_description: str = "") -> str:
         if not model:
             raise AICallError("当前配置未填写文本模型(chat_model),无法进行 AI 拓展")
         user_content = f"原始创意:{text.strip()}"
         if style:
             user_content += f"\n期望风格:{style}"
+        if style_description:
+            user_content += f"\n风格要点(务必融入画面描述,不要原样照抄):{style_description}"
         data = self._request(
             "POST",
             "/v1/chat/completions",
@@ -210,25 +210,27 @@ class AIClient:
 
     # ------------------------------------------------------------ 视频生成
 
-    def _image_data_url(self, image_path: str) -> str:
-        p = Path(image_path)
-        if not p.is_file():
-            raise AICallError(f"图片文件不存在:{image_path}")
-        mime = mimetypes.guess_type(p.name)[0] or "image/png"
-        return f"data:{mime};base64," + base64.b64encode(p.read_bytes()).decode()
+    def _image_data_url(self, data: bytes, mime: str | None = None) -> str:
+        return f"data:{mime or 'image/png'};base64," + base64.b64encode(data).decode()
 
-    def _submit_video(self, model: str, prompt: str, image_path: str | None, duration: int) -> tuple[str | None, str | None]:
+    def _submit_video(
+        self,
+        model: str,
+        prompt: str,
+        image_bytes: bytes | None,
+        duration: int,
+        image_mime: str = "image/png",
+        negative_prompt: str = "",
+    ) -> tuple[str | None, str | None]:
         """提交视频任务,返回 (task_id, 已经完成的直链 URL)。"""
-        image_url = self._image_data_url(image_path) if image_path else None
-
         if self.provider == "openai_videos":
-            if image_url:
+            if image_bytes is not None:
                 # Sora 风格接口用 multipart 传参考图
                 try:
                     resp = self.client.post(
                         f"{self.base}/v1/videos",
                         data={"model": model, "prompt": prompt, "seconds": str(duration)},
-                        files={"input_reference": ("reference.png", base64.b64decode(image_url.split(",", 1)[1]), "image/png")},
+                        files={"input_reference": ("reference.png", image_bytes, image_mime)},
                         timeout=180.0,
                     )
                     if resp.status_code >= 400:
@@ -244,18 +246,21 @@ class AIClient:
                 )
         else:
             body: dict[str, Any] = {"model": model, "prompt": prompt, "duration": duration}
-            if image_url:
-                body["image_url"] = image_url
+            if negative_prompt:
+                # 部分网关/模型(可灵/Vidu 等)支持负向提示词;不识别会 400,由下面的降级重试剔除
+                body["negative_prompt"] = negative_prompt
+            if image_bytes is not None:
+                body["image_url"] = self._image_data_url(image_bytes, image_mime)
             try:
                 data = self._request("POST", "/v1/video/generations", json=body)
             except AICallError as e:
-                # 仅参数类 4xx 才降级重试(去掉 duration 等可选参数);其他错误重发
+                # 仅参数类 4xx 才降级重试(去掉 duration/negative_prompt 等可选参数);其他错误重发
                 # 可能造成网关重复受理、重复计费
                 if e.status_code not in (400, 404, 422):
                     raise
                 minimal = {"model": model, "prompt": prompt}
-                if image_url:
-                    minimal["image_url"] = image_url
+                if image_bytes is not None:
+                    minimal["image_url"] = self._image_data_url(image_bytes, image_mime)
                 data = self._request("POST", "/v1/video/generations", json=minimal)
 
         # 某些渠道同步直接返回视频 URL
@@ -295,7 +300,9 @@ class AIClient:
         model: str,
         prompt: str,
         *,
-        image_path: str | None = None,
+        image_bytes: bytes | None = None,
+        image_mime: str = "image/png",
+        negative_prompt: str = "",
         duration: int = 5,
         poll_interval: float = 5.0,
         timeout_seconds: float = 900.0,
@@ -309,6 +316,7 @@ class AIClient:
         content 为视频文件字节(优先下载到本地);下载失败时只有 url。
         - on_submitted:提交成功拿到 task_id 后立即回调(用于落库,支撑进程重启后恢复)
         - resume_task_id:带上已提交任务的 ID,跳过提交直接轮询(重启恢复用)
+        - negative_prompt:负向提示词(风格预设提供,仅 new-api 任务式接口会传)
         - 单次状态查询失败不致命(网络抖动/网关瞬时 5xx),连续 max_poll_errors 次才判失败
         """
         if not model:
@@ -317,7 +325,9 @@ class AIClient:
         if resume_task_id:
             task_id = resume_task_id
         else:
-            task_id, direct_url = self._submit_video(model, prompt, image_path, duration)
+            task_id, direct_url = self._submit_video(
+                model, prompt, image_bytes, duration, image_mime, negative_prompt
+            )
             if direct_url:
                 return {"url": direct_url, "task_id": None}
             if task_id and on_submitted:

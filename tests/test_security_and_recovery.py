@@ -84,7 +84,8 @@ def test_upload_then_create_roundtrip(client: TestClient) -> None:
     )
     assert uploaded.status_code == 200, uploaded.text
     image_path = uploaded.json()["image_path"]
-    assert image_path.startswith("uploads/") and image_path.endswith(".png")
+    # 存储按用户组织:users/{uid}/uploads/xxx.png
+    assert "/uploads/" in image_path and image_path.endswith(".png")
     assert uploaded.json()["url"].startswith("/api/media/")
 
     resp = _create_creation(
