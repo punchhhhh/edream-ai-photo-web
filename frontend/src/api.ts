@@ -33,7 +33,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 // ---- 登录 ----
 export const fetchMe = () => request<AuthUser>('/api/auth/me')
 
-export const logout = () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
+// sso_logout_url:jwt 模式下先去 Casdoor 注销 SSO 会话,否则退出后会被自动登回;dev 模式为 null
+export const logout = () =>
+  request<{ ok: boolean; sso_logout_url: string | null }>('/api/auth/logout', { method: 'POST' })
 
 // ---- 模型配置 ----
 export const listConfigs = () => request<ModelConfig[]>('/api/configs')

@@ -63,12 +63,14 @@ export default function App() {
   }, [])
 
   const doLogout = async () => {
+    let ssoLogoutUrl: string | null = null
     try {
-      await logout()
+      ssoLogoutUrl = (await logout()).sso_logout_url
     } catch {
       /* 本地会话可能已失效,直接回登录即可 */
     }
-    window.location.href = '/api/auth/login'
+    // 有 SSO 登出地址时先去 Casdoor 注销,登出后回到站点再走正常登录;否则回登录入口
+    window.location.href = ssoLogoutUrl ?? '/api/auth/login'
   }
 
   const refreshConfigs = useCallback(async () => {

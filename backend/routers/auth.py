@@ -2,7 +2,7 @@
 
 import secrets
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -198,5 +198,25 @@ def me(user: User = Depends(get_current_user)):
 @router.post("/logout")
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     revoke_session(db, request.cookies.get(SESSION_COOKIE))
-    response.delete_cookie(SESSION_COOKIE, path="/")
-    return {"ok": True}
+    # 属性要与签发时一致:HTTPS 下浏览器拒绝用非 Secure 的 Set-Cookie 覆盖 Secure Cookie
+    response.delete_cookie(
+        SESSION_COOKIE,
+        path="/",
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    return {"ok": True, "sso_logout_url": _sso_logout_url()}
+
+
+def _sso_logout_url() -> str | None:
+    """jwt 模式下返回 Casdoor 的登出地址:连 IdP 的 SSO 会话一起注销,否则退出后会被自动登回。"""
+    if settings.auth_mode != "jwt" or not settings.oauth_client_id:
+        return None
+    base = urlparse(settings.oauth_authorize_url)._replace(path="", query="", fragment="").geturl()
+    app_origin = (
+        urlparse(settings.oauth_redirect_uri or "")._replace(path="", query="", fragment="").geturl()
+    )
+    if not base.startswith("http") or not app_origin.startswith("http"):
+        return None
+    return f"{base}/logout?{urlencode({'client_id': settings.oauth_client_id, 'redirect_uri': app_origin})}"
