@@ -1,4 +1,4 @@
-import type { AuthUser, Creation, ModelConfig, StylePreset } from './types'
+import type { AuthUser, Creation, ModelConfig, StylePreset, VlogProject, VlogUploadPlan } from './types'
 
 // 配置表单里用户本次输入的内容;编辑已存配置时 api_key 留空表示保留原密钥
 export type ConfigForm = Omit<ModelConfig, 'id' | 'api_key_masked' | 'created_at' | 'updated_at'> & {
@@ -107,4 +107,38 @@ export const saveMergedVideo = (
   form.append('source_ids', JSON.stringify(meta.sourceIds))
   form.append('total_duration', String(meta.totalDuration))
   return request<Creation>('/api/creations/merged', { method: 'POST', body: form })
+}
+
+// ---- 多图 Vlog ----
+export const uploadVlogImages = (files: File[]) => {
+  const form = new FormData()
+  files.forEach((file) => form.append('files', file))
+  return request<VlogUploadPlan>('/api/vlogs/upload', { method: 'POST', body: form })
+}
+
+export const createVlog = (payload: {
+  config_id: number
+  image_paths: string[]
+  style: string
+  description: string
+}) => request<VlogProject>('/api/vlogs', { method: 'POST', body: JSON.stringify(payload) })
+
+export const planVlog = (imagePaths: string[]) =>
+  request<Omit<VlogUploadPlan, 'images'>>('/api/vlogs/plan', {
+    method: 'POST',
+    body: JSON.stringify({ image_paths: imagePaths }),
+  })
+
+export const getVlog = (id: number) => request<VlogProject>(`/api/vlogs/${id}`)
+
+export const getLatestVlog = () => request<VlogProject>('/api/vlogs/latest')
+
+export const retryVlogClip = (projectId: number, clipId: number) =>
+  request<VlogProject>(`/api/vlogs/${projectId}/clips/${clipId}/retry`, { method: 'POST' })
+
+export const completeVlog = (projectId: number, file: Blob, actualDuration: number) => {
+  const form = new FormData()
+  form.append('file', file, `vlog-${projectId}.mp4`)
+  form.append('actual_duration', String(Math.max(1, Math.round(actualDuration))))
+  return request<VlogProject>(`/api/vlogs/${projectId}/complete`, { method: 'POST', body: form })
 }

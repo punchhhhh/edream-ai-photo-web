@@ -8,9 +8,10 @@ from fastapi.staticfiles import StaticFiles
 
 from . import media, storage
 from .database import init_db
-from .routers import auth, configs, creations, styles
+from .routers import auth, configs, creations, styles, vlogs
 from .schemas import HealthOut
 from .services.pipeline import recover_interrupted_creations, start_sweeper
+from .services.vlog_pipeline import recover_interrupted_vlogs
 from .settings import settings
 from .style_presets import seed_default_styles
 
@@ -28,6 +29,9 @@ async def lifespan(_: FastAPI):
     recovered = recover_interrupted_creations()
     if recovered["resumed"] or recovered["failed"]:
         logger.info("startup recovery: %s", recovered)
+    recovered_vlogs = recover_interrupted_vlogs()
+    if recovered_vlogs["resumed"] or recovered_vlogs["failed"]:
+        logger.info("startup vlog recovery: %s", recovered_vlogs)
     # 看门狗:回收心跳丢失的生成中任务,避免用户被单任务并发限制永久锁死
     stop_event = threading.Event()
     sweeper = start_sweeper(stop_event)
@@ -52,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(configs.router, prefix="/api")
     app.include_router(creations.router, prefix="/api")
     app.include_router(styles.router, prefix="/api")
+    app.include_router(vlogs.router, prefix="/api")
 
     @app.get("/api/health", response_model=HealthOut)
     def health():

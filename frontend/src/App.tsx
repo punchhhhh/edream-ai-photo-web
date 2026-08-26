@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import ConfigPanel from './components/ConfigPanel'
 import EditPanel from './components/EditPanel'
 import HistoryPanel from './components/HistoryPanel'
+import VlogPanel from './components/VlogPanel'
 import {
   createCreation,
   expandText,
@@ -28,6 +29,7 @@ const IMAGE_SIZES = [
 const DURATIONS = [4, 5, 10]
 
 export default function App() {
+  const [workspace, setWorkspace] = useState<'creative' | 'vlog'>('creative')
   const [me, setMe] = useState<AuthUser | null>(null)
   const [configs, setConfigs] = useState<ModelConfig[]>([])
   const [styles, setStyles] = useState<StylePreset[]>([])
@@ -50,6 +52,7 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+  const creationStatus = creation?.status
 
   const config = configs.find((c) => c.id === configId) ?? null
 
@@ -133,10 +136,10 @@ export default function App() {
 
   // 页面在后台时,用标题闪烁提醒结果
   useEffect(() => {
-    if (!creation || (creation.status !== 'completed' && creation.status !== 'failed')) return
+    if (creationStatus !== 'completed' && creationStatus !== 'failed') return
     if (!document.hidden) return
     const base = 'eDream AI 视频创作台'
-    const msg = creation.status === 'completed' ? '✅ 视频生成完成' : '❌ 视频生成失败'
+    const msg = creationStatus === 'completed' ? '✅ 视频生成完成' : '❌ 视频生成失败'
     let on = true
     const timer = setInterval(() => {
       document.title = on ? msg : base
@@ -154,7 +157,7 @@ export default function App() {
       document.title = base
       document.removeEventListener('visibilitychange', stopOnVisible)
     }
-  }, [creation?.status])
+  }, [creationStatus])
 
   const doExpand = async () => {
     if (!configId || !text.trim()) return
@@ -304,13 +307,13 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${workspace === 'vlog' ? 'vlog-mode' : ''}`}>
       <header className="topbar">
         <div className="brand">
           <span className="logo">✦</span>
           <div>
             <h1>eDream AI 视频创作台</h1>
-            <p>一句话创意 → AI 拓展 → 图片 → 视频</p>
+            <p>{workspace === 'creative' ? '一句话创意 → AI 拓展 → 图片 → 视频' : '图片场景 → 动态分镜 → Vlog'}</p>
           </div>
         </div>
         <div className="topbar-actions">
@@ -354,7 +357,26 @@ export default function App() {
         </div>
       )}
 
-      {error && (
+      <nav className="workspace-tabs" aria-label="创作模式">
+        <button
+          type="button"
+          className={workspace === 'creative' ? 'active' : ''}
+          aria-current={workspace === 'creative' ? 'page' : undefined}
+          onClick={() => setWorkspace('creative')}
+        >
+          创意视频
+        </button>
+        <button
+          type="button"
+          className={workspace === 'vlog' ? 'active' : ''}
+          aria-current={workspace === 'vlog' ? 'page' : undefined}
+          onClick={() => setWorkspace('vlog')}
+        >
+          Vlog
+        </button>
+      </nav>
+
+      {workspace === 'creative' && error && (
         <div className="alert error">
           {error}
           <button className="icon-btn" onClick={() => setError('')}>
@@ -363,7 +385,7 @@ export default function App() {
         </div>
       )}
 
-      <main className="steps">
+      {workspace === 'creative' ? <main className="steps">
         {section(
           1,
           '一句话创意',
@@ -542,7 +564,7 @@ export default function App() {
             )}
           </div>,
         )}
-      </main>
+      </main> : <VlogPanel config={config} styles={styles} />}
 
       {configOpen && (
         <ConfigPanel

@@ -1,13 +1,13 @@
 :root {
-  --bg: #0b0d16;
-  --bg-soft: #11141f;
-  --panel: #161a29;
-  --panel-2: #1c2135;
-  --border: #262c42;
-  --text: #e8eaf2;
-  --muted: #8b91a8;
-  --primary: #7c5cff;
-  --primary-2: #4d9dff;
+  --bg: #0e1210;
+  --bg-soft: #121815;
+  --panel: #181e1b;
+  --panel-2: #202824;
+  --border: #303a35;
+  --text: #edf3ef;
+  --muted: #98a49d;
+  --primary: #4fc6a5;
+  --primary-2: #e6ad58;
   --danger: #ff6b7a;
   --success: #3ddc97;
   --radius: 14px;
@@ -20,8 +20,7 @@
 
 body {
   margin: 0;
-  background: radial-gradient(1200px 600px at 80% -10%, rgba(124, 92, 255, 0.16), transparent 60%),
-    radial-gradient(900px 500px at -10% 10%, rgba(77, 157, 255, 0.12), transparent 55%), var(--bg);
+  background: var(--bg);
   color: var(--text);
   min-height: 100vh;
 }
@@ -61,8 +60,8 @@ body {
   height: 42px;
   border-radius: 12px;
   font-size: 20px;
-  background: linear-gradient(135deg, var(--primary), var(--primary-2));
-  color: #fff;
+  background: var(--primary);
+  color: var(--bg);
 }
 
 .brand h1 {
@@ -119,7 +118,8 @@ body {
 }
 
 .btn.primary {
-  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  background: var(--primary);
+  color: var(--bg);
   border: none;
   font-weight: 600;
 }
@@ -369,7 +369,8 @@ body {
 }
 
 .chip.active {
-  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  background: var(--primary);
+  color: var(--bg);
   border-color: transparent;
   font-weight: 600;
 }
@@ -431,7 +432,7 @@ body {
 
 .path-card.active {
   border-color: var(--primary);
-  background: linear-gradient(135deg, rgba(124, 92, 255, 0.16), rgba(77, 157, 255, 0.1));
+  background: rgba(79, 198, 165, 0.1);
   box-shadow: 0 0 0 1px var(--primary);
 }
 
@@ -873,6 +874,409 @@ body {
   background: #000;
 }
 
+/* ---------------- 创作模式 ---------------- */
+.app.vlog-mode {
+  max-width: 1200px;
+}
+
+.workspace-tabs {
+  width: fit-content;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin-top: 16px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+
+.workspace-tabs button {
+  min-width: 112px;
+  min-height: 38px;
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-tabs button.active {
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: inset 0 -2px var(--primary);
+}
+
+.workspace-tabs button:focus-visible,
+.btn:focus-visible,
+.icon-btn:focus-visible,
+.vlog-dropzone:focus-visible,
+.image-actions button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ---------------- Vlog 工作台 ---------------- */
+.vlog-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  align-items: start;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.vlog-form-column {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.vlog-section {
+  padding: 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vlog-section:last-child {
+  border-bottom: 0;
+}
+
+.vlog-section-head,
+.summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.vlog-section-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.vlog-section-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.vlog-dropzone {
+  width: 100%;
+  min-height: 150px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.vlog-dropzone:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: rgba(79, 198, 165, 0.06);
+}
+
+.vlog-dropzone > span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.upload-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--primary);
+  font-size: 24px;
+}
+
+.vlog-image-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.vlog-image-item {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-soft);
+}
+
+.vlog-image-item.dragging {
+  opacity: 0.45;
+}
+
+.vlog-image-item img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  display: block;
+  object-fit: cover;
+}
+
+.vlog-image-item figcaption {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 7px 4px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.image-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.image-actions button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.image-actions button:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.vlog-options {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.field textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 9px 10px;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.field textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.vlog-summary {
+  position: sticky;
+  top: 96px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.summary-head {
+  align-items: center;
+  margin-bottom: 12px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.vlog-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 0 16px;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+
+.vlog-metrics div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.vlog-metrics dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.vlog-metrics dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.scene-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 16px;
+}
+
+.scene-row {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--bg-soft);
+}
+
+.scene-number,
+.clip-index {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.scene-thumbs {
+  display: flex;
+  min-width: 0;
+}
+
+.scene-thumbs img {
+  width: 34px;
+  height: 28px;
+  object-fit: cover;
+  border: 2px solid var(--bg-soft);
+  border-radius: 4px;
+  margin-left: -7px;
+}
+
+.scene-thumbs img:first-child {
+  margin-left: 0;
+}
+
+.scene-row strong {
+  text-align: right;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.summary-empty {
+  padding: 36px 8px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.vlog-submit {
+  min-height: 44px;
+}
+
+.summary-warning {
+  margin: 9px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+  text-align: center;
+}
+
+.clip-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clip-progress {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-soft);
+}
+
+.clip-progress > div {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.clip-progress strong {
+  font-size: 13px;
+}
+
+.clip-progress span,
+.clip-progress small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.clip-progress small {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.merge-status {
+  margin-top: 14px;
+}
+
+.merge-status div {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.merge-status progress {
+  width: 100%;
+  height: 7px;
+  accent-color: var(--primary);
+}
+
+.vlog-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.vlog-result video {
+  width: min(100%, 720px);
+  max-height: 72vh;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #000;
+}
+
+.vlog-mobile-action {
+  display: none;
+}
+
 @media (max-width: 640px) {
   .topbar {
     position: static;
@@ -891,5 +1295,77 @@ body {
   .history-thumb {
     width: 100%;
     height: 140px;
+  }
+
+  .app {
+    padding: 12px 12px 86px;
+  }
+
+  .workspace-tabs {
+    width: 100%;
+  }
+
+  .workspace-tabs button {
+    min-width: 0;
+  }
+
+  .vlog-workspace {
+    display: block;
+  }
+
+  .vlog-section {
+    padding: 16px;
+  }
+
+  .vlog-image-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .vlog-options {
+    grid-template-columns: 1fr;
+  }
+
+  .vlog-summary {
+    position: static;
+    margin-top: 12px;
+  }
+
+  .vlog-summary .vlog-submit {
+    display: none;
+  }
+
+  .vlog-mobile-action {
+    position: fixed;
+    right: 12px;
+    bottom: 10px;
+    left: 12px;
+    z-index: 20;
+    display: block;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(14, 18, 16, 0.92);
+    backdrop-filter: blur(8px);
+  }
+}
+
+@media (min-width: 641px) and (max-width: 920px) {
+  .vlog-workspace {
+    grid-template-columns: minmax(0, 1fr) 270px;
+  }
+
+  .vlog-image-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

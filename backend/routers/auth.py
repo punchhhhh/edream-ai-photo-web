@@ -100,7 +100,7 @@ def login(request: Request, next: str = "/"):
         with SessionLocal() as db:
             return _finalize_login(
                 db,
-                Principal(sub=settings.dev_auth_sub, display_name="开发用户"),
+                Principal(sub=settings.dev_auth_sub),
                 next_path,
                 request.headers.get("user-agent"),
             )

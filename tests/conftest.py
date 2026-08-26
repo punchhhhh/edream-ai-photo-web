@@ -6,6 +6,7 @@ import tempfile
 _tmpdir = tempfile.mkdtemp(prefix="edream-test-")
 os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{_tmpdir}/test.db"
 os.environ["AUTH_MODE"] = "dev"
+os.environ["DEV_AUTH_SUB"] = "dev-user"
 os.environ["MEDIA_DIR"] = os.path.join(_tmpdir, "media")
 
 import pytest  # noqa: E402

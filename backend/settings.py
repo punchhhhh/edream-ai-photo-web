@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     video_poll_interval: float = 5.0
     video_timeout_seconds: float = 900.0
     max_upload_mb: int = 20
+    max_vlog_upload_total_mb: int = 90
+    vlog_image_long_edge: int = 1600
     # 浏览器合成成片回传的大小上限(多段拼接,比单图宽松)
     max_video_upload_mb: int = 500
 

@@ -110,6 +110,75 @@ class MediaOut(BaseModel):
     url: str
 
 
+class VlogImageOut(BaseModel):
+    image_path: str
+    url: str
+    width: int
+    height: int
+    order: int
+
+
+class VlogPlanClipOut(BaseModel):
+    reference_paths: list[str]
+    duration: int
+
+
+class VlogPlanIn(BaseModel):
+    image_paths: list[str] = Field(min_length=2, max_length=9)
+
+
+class VlogPlanOut(BaseModel):
+    ratio: str
+    target_duration: int
+    clips: list[VlogPlanClipOut]
+
+
+class VlogUploadOut(BaseModel):
+    images: list[VlogImageOut]
+    ratio: str
+    target_duration: int
+    clips: list[VlogPlanClipOut]
+
+
+class VlogCreateIn(BaseModel):
+    config_id: int
+    image_paths: list[str] = Field(min_length=2, max_length=9)
+    style: str = Field(default="写实纪录", max_length=50)
+    description: str = Field(default="", max_length=500)
+
+
+class VlogClipOut(BaseModel):
+    id: int
+    sequence: int
+    reference_paths: list[str]
+    reference_urls: list[str]
+    duration: int
+    status: str
+    error: str | None
+    video_url: str | None
+    retry_count: int
+
+
+class VlogProjectOut(BaseModel):
+    id: int
+    description: str
+    style: str
+    image_paths: list[str]
+    image_urls: list[str]
+    ratio: str
+    resolution: str
+    target_duration: int
+    status: str
+    error: str | None
+    final_video_url: str | None
+    final_creation_id: int | None
+    config_name: str
+    video_model: str
+    clips: list[VlogClipOut]
+    created_at: datetime
+    updated_at: datetime
+
+
 class CreationIn(BaseModel):
     input_text: str = Field(min_length=1, max_length=2000)
     style: str = ""

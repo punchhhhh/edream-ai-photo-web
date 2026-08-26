@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -152,6 +152,87 @@ class Creation(Base):
     chat_model: Mapped[str] = mapped_column(String(200), default="")
     image_model: Mapped[str] = mapped_column(String(200), default="")
     video_model: Mapped[str] = mapped_column(String(200), default="")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class VlogProject(Base):
+    """多图 Vlog 项目；两个远端片段完成后由浏览器做最终转场合成。"""
+
+    __tablename__ = "vlog_projects"
+    __table_args__ = (
+        Index(
+            "uq_vlog_projects_user_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('pending', 'generating_video', 'ready_to_merge')"
+            ),
+            sqlite_where=text(
+                "status IN ('pending', 'generating_video', 'ready_to_merge')"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    description: Mapped[str] = mapped_column(Text, default="")
+    style: Mapped[str] = mapped_column(String(50), default="写实纪录")
+    image_paths: Mapped[list[str]] = mapped_column(JSON, default=list)
+    ratio: Mapped[str] = mapped_column(String(10), default="9:16")
+    resolution: Mapped[str] = mapped_column(String(20), default="720p")
+    target_duration: Mapped[int] = mapped_column(Integer, default=30)
+    # pending / generating_video / ready_to_merge / completed / failed
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    final_video_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    final_creation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("creations.id", ondelete="SET NULL"), nullable=True
+    )
+
+    config_id: Mapped[int | None] = mapped_column(
+        ForeignKey("model_configs.id", ondelete="SET NULL"), nullable=True
+    )
+    config_name: Mapped[str] = mapped_column(String(100), default="")
+    video_model: Mapped[str] = mapped_column(String(200), default="")
+    video_provider: Mapped[str] = mapped_column(String(50), default="video_generations")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class VlogClip(Base):
+    """Vlog 的单个 Seedance 片段，reference_paths 保留分组和顺序。"""
+
+    __tablename__ = "vlog_clips"
+    __table_args__ = (Index("uq_vlog_clips_project_sequence", "project_id", "sequence", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("vlog_projects.id", ondelete="CASCADE"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    reference_paths: Mapped[list[str]] = mapped_column(JSON, default=list)
+    prompt: Mapped[str] = mapped_column(Text)
+    duration: Mapped[int] = mapped_column(Integer, default=15)
+    # pending / generating_video / completed / failed
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    video_task_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    video_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

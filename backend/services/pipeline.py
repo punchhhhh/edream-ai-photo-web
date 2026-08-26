@@ -97,6 +97,10 @@ def start_sweeper(stop_event: threading.Event) -> threading.Thread:
         while not stop_event.wait(SWEEPER_INTERVAL_SECONDS):
             try:
                 reap_stale_creations()
+                # 共用一个轻量看门狗线程，避免为 Vlog 再维护一套生命周期。
+                from .vlog_pipeline import reap_stale_vlogs
+
+                reap_stale_vlogs()
             except Exception:  # noqa: BLE001 —— 看门狗自身不能倒
                 logger.exception("reap stale creations failed")
 

@@ -221,6 +221,11 @@ class AIClient:
         duration: int,
         image_mime: str = "image/png",
         negative_prompt: str = "",
+        *,
+        image_inputs: list[tuple[bytes, str]] | None = None,
+        ratio: str | None = None,
+        resolution: str | None = None,
+        generate_audio: bool | None = None,
     ) -> tuple[str | None, str | None]:
         """提交视频任务,返回 (task_id, 已经完成的直链 URL)。"""
         if self.provider == "openai_videos":
@@ -249,7 +254,30 @@ class AIClient:
             if negative_prompt:
                 # 部分网关/模型(可灵/Vidu 等)支持负向提示词;不识别会 400,由下面的降级重试剔除
                 body["negative_prompt"] = negative_prompt
-            if image_bytes is not None:
+            if image_inputs is not None:
+                image_urls = [self._image_data_url(data, mime) for data, mime in image_inputs]
+                metadata: dict[str, Any] = {
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": url},
+                            "role": "reference_image",
+                        }
+                        for url in image_urls
+                    ],
+                    # 兼容较早的 new-api Doubao 渠道实现。
+                    "image_urls": image_urls,
+                    "duration": duration,
+                }
+                if ratio:
+                    metadata["ratio"] = ratio
+                if resolution:
+                    metadata["resolution"] = resolution
+                if generate_audio is not None:
+                    metadata["generate_audio"] = generate_audio
+                body["images"] = image_urls
+                body["metadata"] = metadata
+            elif image_bytes is not None:
                 body["image_url"] = self._image_data_url(image_bytes, image_mime)
             try:
                 data = self._request("POST", "/v1/video/generations", json=body)
@@ -258,8 +286,14 @@ class AIClient:
                 # 可能造成网关重复受理、重复计费
                 if e.status_code not in (400, 404, 422):
                     raise
-                minimal = {"model": model, "prompt": prompt}
-                if image_bytes is not None:
+                minimal: dict[str, Any] = {"model": model, "prompt": prompt}
+                if image_inputs is not None:
+                    # 已明确收到参数类错误才降级；保留全部参考图，只去掉兼容 metadata。
+                    minimal["duration"] = duration
+                    minimal["images"] = [
+                        self._image_data_url(data, mime) for data, mime in image_inputs
+                    ]
+                elif image_bytes is not None:
                     minimal["image_url"] = self._image_data_url(image_bytes, image_mime)
                 data = self._request("POST", "/v1/video/generations", json=minimal)
 
@@ -302,8 +336,12 @@ class AIClient:
         *,
         image_bytes: bytes | None = None,
         image_mime: str = "image/png",
+        image_inputs: list[tuple[bytes, str]] | None = None,
         negative_prompt: str = "",
         duration: int = 5,
+        ratio: str | None = None,
+        resolution: str | None = None,
+        generate_audio: bool | None = None,
         poll_interval: float = 5.0,
         timeout_seconds: float = 900.0,
         on_progress: Callable[[str], None] | None = None,
@@ -325,8 +363,23 @@ class AIClient:
         if resume_task_id:
             task_id = resume_task_id
         else:
+            submit_options: dict[str, Any] = {}
+            if image_inputs is not None:
+                submit_options["image_inputs"] = image_inputs
+            if ratio is not None:
+                submit_options["ratio"] = ratio
+            if resolution is not None:
+                submit_options["resolution"] = resolution
+            if generate_audio is not None:
+                submit_options["generate_audio"] = generate_audio
             task_id, direct_url = self._submit_video(
-                model, prompt, image_bytes, duration, image_mime, negative_prompt
+                model,
+                prompt,
+                image_bytes,
+                duration,
+                image_mime,
+                negative_prompt,
+                **submit_options,
             )
             if direct_url:
                 return {"url": direct_url, "task_id": None}
