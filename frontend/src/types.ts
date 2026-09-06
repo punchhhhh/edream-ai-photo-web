@@ -155,4 +155,5 @@ export const STATUS_TEXT: Record<string, string> = {
   ready_to_merge: '片段已就绪',
   completed: '已完成',
   failed: '失败',
+  cancelled: '已放弃',
 }

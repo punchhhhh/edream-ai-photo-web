@@ -4,7 +4,7 @@ from io import BytesIO
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -358,10 +358,10 @@ def complete_vlog(
 ):
     project = _get_project(db, user, project_id)
     if project.status != "ready_to_merge":
-        raise HTTPException(409, "两个片段尚未全部生成完成")
+        raise HTTPException(409, "片段尚未全部生成完成")
     clips = db.scalars(select(VlogClip).where(VlogClip.project_id == project.id)).all()
     if not clips or any(clip.status != "completed" for clip in clips):
-        raise HTTPException(409, "两个片段尚未全部生成完成")
+        raise HTTPException(409, "片段尚未全部生成完成")
     if not (file.content_type or "").lower().startswith("video/"):
         raise HTTPException(422, "仅支持视频文件")
     head = file.file.read(1024 * 1024)
@@ -405,5 +405,30 @@ def complete_vlog(
         db.rollback()
         storage.delete(video_path)
         raise
+    db.refresh(project)
+    return _project_out(db, project)
+
+
+@router.post("/vlogs/{project_id}/abandon", response_model=VlogProjectOut)
+def abandon_vlog(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """用户主动放弃未完成的项目；放弃后不再占用「唯一活跃项目」名额，可以新建。"""
+    project = _get_project(db, user, project_id)
+    if project.status not in ACTIVE_VLOG_STATUSES:
+        raise HTTPException(409, "项目已结束，无需放弃")
+    project.status = "cancelled"
+    project.error = "用户已放弃该项目"
+    db.execute(
+        update(VlogClip)
+        .where(
+            VlogClip.project_id == project.id,
+            VlogClip.status.in_(("pending", "generating_video")),
+        )
+        .values(status="cancelled", error="项目已放弃")
+    )
+    db.commit()
     db.refresh(project)
     return _project_out(db, project)

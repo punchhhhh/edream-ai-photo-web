@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  abandonVlog,
   completeVlog,
   createVlog,
   getLatestVlog,
@@ -8,7 +9,12 @@ import {
   retryVlogClip,
   uploadVlogImages,
 } from '../api'
-import { mergeImageMotionVlog, mergeVlogClips, type MergeProgress } from '../services/ffmpegClient'
+import {
+  mergeImageMotionVlog,
+  mergeVlogClips,
+  VLOG_TRANSITION_SECONDS,
+  type MergeProgress,
+} from '../services/ffmpegClient'
 import {
   STATUS_TEXT,
   type ModelConfig,
@@ -33,6 +39,7 @@ type Plan = Omit<VlogUploadPlan, 'images'>
 type VlogSourceMode = 'ai' | 'motion'
 
 interface LocalImage {
+  id: string
   file: File
   url: string
   width: number
@@ -56,6 +63,7 @@ export default function VlogPanel({ config, styles }: Props) {
   const [planning, setPlanning] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [localRendering, setLocalRendering] = useState(false)
+  const [merging, setMerging] = useState(false)
   const [mergeProgress, setMergeProgress] = useState<MergeProgress | null>(null)
   const [error, setError] = useState('')
   const [dragIndex, setDragIndex] = useState<number | null>(null)
@@ -135,6 +143,7 @@ export default function VlogPanel({ config, styles }: Props) {
       return
     }
     mergingProject.current = current.id
+    setMerging(true)
     setError('')
     try {
       const merged = await mergeVlogClips(sources, current.ratio, current.transition_style, setMergeProgress)
@@ -147,8 +156,23 @@ export default function VlogPanel({ config, styles }: Props) {
     } finally {
       setMergeProgress(null)
       mergingProject.current = null
+      setMerging(false)
     }
   }, [])
+
+  const abandonProject = async (current: VlogProject) => {
+    const message = ['pending', 'generating_video'].includes(current.status)
+      ? '放弃后将停止该项目，正在生成的片段会作废。确定放弃？'
+      : '片段已生成但尚未合成，放弃后需要重新创建项目。确定放弃？'
+    if (!window.confirm(message)) return
+    setError('')
+    try {
+      await abandonVlog(current.id)
+      reset()
+    } catch (cause) {
+      setError((cause as Error).message)
+    }
+  }
 
   const clearLocalResult = () => {
     if (localResultRef.current) URL.revokeObjectURL(localResultRef.current.url)
@@ -176,7 +200,7 @@ export default function VlogPanel({ config, styles }: Props) {
     new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file)
       const image = new Image()
-      image.onload = () => resolve({ file, url, width: image.naturalWidth, height: image.naturalHeight, order })
+      image.onload = () => resolve({ id: crypto.randomUUID(), file, url, width: image.naturalWidth, height: image.naturalHeight, order })
       image.onerror = () => {
         URL.revokeObjectURL(url)
         reject(new Error(`${file.name} 不是可读取的图片`))
@@ -202,14 +226,15 @@ export default function VlogPanel({ config, styles }: Props) {
     setError('')
     setProject(null)
     clearLocalResult()
+    const next: LocalImage[] = []
     try {
-      const next: LocalImage[] = []
       for (let index = 0; index < files.length; index++) {
         next.push(await readLocalImage(files[index], index))
       }
       localImagesRef.current.forEach((image) => URL.revokeObjectURL(image.url))
       setLocalImages(next)
     } catch (cause) {
+      next.forEach((image) => URL.revokeObjectURL(image.url))
       setError((cause as Error).message)
     } finally {
       setUploading(false)
@@ -287,8 +312,7 @@ export default function VlogPanel({ config, styles }: Props) {
 
   const renderLocal = async () => {
     if (localImages.length < 1 || mergeProgress || localRendering) return
-    const portrait = localImages.filter((image) => image.height > image.width).length
-    const ratio = portrait > localImages.length / 2 ? '9:16' : '16:9'
+    const ratio = inferLocalRatio()
     setError('')
     clearLocalResult()
     setLocalRendering(true)
@@ -343,10 +367,15 @@ export default function VlogPanel({ config, styles }: Props) {
       ? localImages.length >= 1
       : !!config?.video_model.toLowerCase().includes('seedance-2') && !!plan && images.length >= 2)
   const imageByPath = new Map(images.map((image) => [image.image_path, image]))
-  const localRatio = localImages.length
-    ? localImages.filter((image) => image.height > image.width).length > localImages.length / 2 ? '9:16' : '16:9'
-    : '16:9'
-  const localTotalDuration = Math.max(1, imageDuration * localImages.length - 0.6 * Math.max(0, localImages.length - 1))
+  const inferLocalRatio = () => {
+    const portrait = localImages.filter((image) => image.height > image.width).length
+    return portrait > localImages.length / 2 ? '9:16' : '16:9'
+  }
+  const localRatio = localImages.length ? inferLocalRatio() : '16:9'
+  const localTotalDuration = Math.max(
+    1,
+    imageDuration * localImages.length - VLOG_TRANSITION_SECONDS * Math.max(0, localImages.length - 1),
+  )
 
   return (
     <main className="vlog-workspace" aria-busy={busy}>
@@ -366,12 +395,11 @@ export default function VlogPanel({ config, styles }: Props) {
               <h2>{sourceMode === 'ai' ? 'AI 视频片段' : '本地图片动效'}</h2>
               <p>{sourceMode === 'ai' ? '图片会提交给视频模型生成连续场景' : '图片只在浏览器本地处理，不上传服务器'}</p>
             </div>
-            <div className="vlog-source-switch" role="tablist" aria-label="选择片段来源">
+            <div className="vlog-source-switch" role="group" aria-label="选择片段来源">
               <button
                 className={sourceMode === 'ai' ? 'selected' : ''}
                 type="button"
-                role="tab"
-                aria-selected={sourceMode === 'ai'}
+                aria-pressed={sourceMode === 'ai'}
                 disabled={!!project || busy}
                 onClick={() => setSourceMode('ai')}
               >
@@ -380,8 +408,7 @@ export default function VlogPanel({ config, styles }: Props) {
               <button
                 className={sourceMode === 'motion' ? 'selected' : ''}
                 type="button"
-                role="tab"
-                aria-selected={sourceMode === 'motion'}
+                aria-pressed={sourceMode === 'motion'}
                 disabled={!!project || busy}
                 onClick={() => setSourceMode('motion')}
               >
@@ -448,6 +475,7 @@ export default function VlogPanel({ config, styles }: Props) {
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
                 event.preventDefault()
+                if (uploading) return
                 uploadLocal(Array.from(event.dataTransfer.files))
               }}
             >
@@ -488,7 +516,7 @@ export default function VlogPanel({ config, styles }: Props) {
             <div className="vlog-image-grid">
               {localImages.map((image, index) => (
                 <figure
-                  key={`${image.file.name}-${image.order}`}
+                  key={image.id}
                   className={`vlog-image-item ${localDragIndex === index ? 'dragging' : ''}`}
                   draggable={!localResult}
                   onDragStart={() => setLocalDragIndex(index)}
@@ -610,7 +638,19 @@ export default function VlogPanel({ config, styles }: Props) {
                   {' '}{VLOG_TRANSITIONS.find((item) => item.key === project.transition_style)?.label ?? project.transition_style}
                 </p>
               </div>
-              {project.status === 'completed' && <button className="btn" type="button" onClick={reset}>新建 Vlog</button>}
+              {['completed', 'cancelled'].includes(project.status) && (
+                <button className="btn" type="button" onClick={reset}>新建 Vlog</button>
+              )}
+              {['pending', 'generating_video'].includes(project.status) && (
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={merging}
+                  onClick={() => abandonProject(project)}
+                >
+                  放弃项目
+                </button>
+              )}
             </div>
             <div className="clip-progress-list">
               {project.clips.map((clip) => (
@@ -647,10 +687,18 @@ export default function VlogPanel({ config, styles }: Props) {
                   <button
                     className="btn primary"
                     type="button"
-                    disabled={!!mergingProject.current}
+                    disabled={merging}
                     onClick={() => mergeProject(project)}
                   >
                     浏览器合成
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    disabled={merging}
+                    onClick={() => abandonProject(project)}
+                  >
+                    放弃项目
                   </button>
                 </div>
                 <p className="merge-choice-note">
@@ -722,7 +770,7 @@ export default function VlogPanel({ config, styles }: Props) {
             </dl>
             <div className="scene-plan local-scene-plan">
               {localImages.map((image, index) => (
-                <div className="scene-row" key={`${image.file.name}-${image.order}`}>
+                <div className="scene-row" key={image.id}>
                   <span className="scene-number">{index + 1}</span>
                   <div className="scene-thumbs"><img src={image.url} alt="" /></div>
                   <strong>{imageDuration}s</strong>

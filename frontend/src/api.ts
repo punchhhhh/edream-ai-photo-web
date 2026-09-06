@@ -144,6 +144,9 @@ export const getLatestVlog = () => request<VlogProject>('/api/vlogs/latest')
 export const retryVlogClip = (projectId: number, clipId: number) =>
   request<VlogProject>(`/api/vlogs/${projectId}/clips/${clipId}/retry`, { method: 'POST' })
 
+export const abandonVlog = (projectId: number) =>
+  request<VlogProject>(`/api/vlogs/${projectId}/abandon`, { method: 'POST' })
+
 export const completeVlog = (projectId: number, file: Blob, actualDuration: number) => {
   const form = new FormData()
   form.append('file', file, `vlog-${projectId}.mp4`)

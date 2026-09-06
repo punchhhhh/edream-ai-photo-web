@@ -104,6 +104,12 @@ def start_vlog_thread(project_id: int) -> None:
     ).start()
 
 
+def _project_cancelled(session, project: VlogProject) -> bool:
+    """放弃接口会把项目置为 cancelled；线程在每个片段前后复查，避免覆盖用户的决定。"""
+    session.refresh(project)
+    return project.status == "cancelled"
+
+
 def _run_vlog(project_id: int) -> None:
     with SessionLocal() as session:
         project = session.get(VlogProject, project_id)
@@ -116,7 +122,11 @@ def _run_vlog(project_id: int) -> None:
             for clip in clips:
                 if clip.status == "completed":
                     continue
+                if _project_cancelled(session, project):
+                    return
                 _generate_clip(session, project, clip)
+            if _project_cancelled(session, project):
+                return
             project.status = "ready_to_merge"
             project.error = None
             session.commit()

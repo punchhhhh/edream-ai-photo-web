@@ -21,6 +21,9 @@ declare global {
 
 const ENGINE_BASE = '/ffmpeg'
 
+/** 统一的 Vlog 转场时长(秒),两条合成路径与前端时长预估共用。 */
+export const VLOG_TRANSITION_SECONDS = 0.6
+
 export type MergeStage = 'loading-engine' | 'downloading' | 'copy' | 'probing' | 'encode'
 
 export interface MergeProgress {
@@ -302,7 +305,7 @@ export async function mergeVlogClips(
   }
 
   try {
-    const transition = 0.6
+    const transition = VLOG_TRANSITION_SECONDS
     const [width, height] = ratio === '9:16' ? [720, 1280] : [1280, 720]
     const filters: string[] = probes.map(
       (_, index) =>
@@ -462,7 +465,7 @@ export async function mergeImageMotionVlog(
       )
     }
 
-    const transition = sources.length > 1 ? 0.6 : 0
+    const transition = sources.length > 1 ? VLOG_TRANSITION_SECONDS : 0
     let videoLabel = 'v0'
     let cumulativeDuration = imageDuration
     for (let index = 1; index < sources.length; index++) {

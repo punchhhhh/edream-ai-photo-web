@@ -1,11 +1,15 @@
 """多图 Vlog 的上传、规划、模型调用和成片入库测试。"""
 
+import re
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import select
+
+from backend.services.vlog_transitions import VLOG_TRANSITIONS
 
 CONFIG_PAYLOAD = {
     "name": "Seedance 测试网关",
@@ -255,3 +259,125 @@ def test_complete_vlog_creates_history_record(client: TestClient) -> None:
     assert history[0]["id"] == body["final_creation_id"]
     assert history[0]["image_source"] == "merged"
     assert history[0]["duration"] == 19
+
+
+def test_create_vlog_rejects_unknown_transition(client: TestClient) -> None:
+    upload = _upload(client, count=2)
+    config = _config(client)
+    response = client.post(
+        "/api/vlogs",
+        json={
+            "config_id": config["id"],
+            "image_paths": [image["image_path"] for image in upload["images"]],
+            "style": "写实纪录",
+            "transition_style": "star-wipe",
+        },
+        headers=_headers(),
+    )
+    assert response.status_code == 422
+    assert "转场" in response.json()["detail"]
+
+
+def test_complete_vlog_rejects_incomplete_clips(client: TestClient) -> None:
+    from backend.database import SessionLocal
+    from backend.models import VlogProject
+
+    upload = _upload(client, count=2)
+    config = _config(client)
+    project = _create_project(client, upload, config["id"])
+    with SessionLocal() as db:
+        row = db.get(VlogProject, project["id"])
+        row.status = "ready_to_merge"
+        db.commit()
+
+    response = client.post(
+        f"/api/vlogs/{project['id']}/complete",
+        files={"file": ("vlog.mp4", MP4_BYTES, "video/mp4")},
+        headers=_headers(),
+    )
+    assert response.status_code == 409
+
+
+def test_abandon_ready_to_merge_unblocks_new_project(client: TestClient) -> None:
+    from backend.database import SessionLocal
+    from backend.models import VlogProject
+
+    upload = _upload(client, count=2)
+    config = _config(client)
+    project = _create_project(client, upload, config["id"])
+    with SessionLocal() as db:
+        row = db.get(VlogProject, project["id"])
+        row.status = "ready_to_merge"
+        db.commit()
+
+    response = client.post(f"/api/vlogs/{project['id']}/abandon", headers=_headers())
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "cancelled"
+
+    # 放弃后释放「唯一活跃项目」名额，可以立即新建
+    created = client.post(
+        "/api/vlogs",
+        json={
+            "config_id": config["id"],
+            "image_paths": [image["image_path"] for image in upload["images"]],
+            "style": "写实纪录",
+        },
+        headers=_headers(),
+    )
+    assert created.status_code == 200, created.text
+
+    # 已结束的项目不能重复放弃
+    again = client.post(f"/api/vlogs/{project['id']}/abandon", headers=_headers())
+    assert again.status_code == 409
+
+
+def test_pipeline_respects_cancelled_project(client: TestClient, monkeypatch) -> None:
+    from backend.database import SessionLocal
+    from backend.models import VlogClip, VlogProject
+    from backend.services import vlog_pipeline
+
+    upload = _upload(client, count=4)
+    config = _config(client)
+    project = _create_project(client, upload, config["id"])
+    calls: list[int] = []
+
+    class FakeAIClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def run_video(self, model, prompt, **kwargs):
+            calls.append(1)
+            kwargs["on_submitted"](f"task-{len(calls)}")
+            # 模拟放弃接口在片段生成期间把项目置为 cancelled
+            with SessionLocal() as db:
+                row = db.get(VlogProject, project["id"])
+                row.status = "cancelled"
+                db.commit()
+            return {"task_id": f"task-{len(calls)}", "content": MP4_BYTES}
+
+    monkeypatch.setattr(vlog_pipeline, "AIClient", FakeAIClient)
+    vlog_pipeline._run_vlog(project["id"])
+
+    with SessionLocal() as db:
+        row = db.get(VlogProject, project["id"])
+        clips = db.scalars(
+            select(VlogClip).where(VlogClip.project_id == project["id"]).order_by(VlogClip.sequence)
+        ).all()
+        assert row.status == "cancelled"
+        assert [clip.status for clip in clips] == ["completed", "pending"]
+    assert len(calls) == 1
+
+
+def test_transition_catalog_matches_frontend() -> None:
+    """转场清单在前后端各维护一份，防止两边漂移。"""
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "types.ts").read_text(encoding="utf-8")
+    match = re.search(r"export const VLOG_TRANSITIONS: VlogTransitionOption\[\] = \[(.*?)\n\]", source, re.S)
+    assert match, "frontend/src/types.ts 中找不到 VLOG_TRANSITIONS 定义"
+    frontend_keys = re.findall(r"key: '(\w+)'", match.group(1))
+    assert tuple(frontend_keys) == tuple(item.key for item in VLOG_TRANSITIONS)

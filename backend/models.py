@@ -162,7 +162,7 @@ class Creation(Base):
 
 
 class VlogProject(Base):
-    """多图 Vlog 项目；两个远端片段完成后由浏览器做最终转场合成。"""
+    """多图 Vlog 项目；多个片段生成完成后由浏览器做最终转场合成。"""
 
     __tablename__ = "vlog_projects"
     __table_args__ = (
@@ -193,7 +193,7 @@ class VlogProject(Base):
     transition_style: Mapped[str] = mapped_column(
         String(30), default="fade", server_default="fade"
     )
-    # pending / generating_video / ready_to_merge / completed / failed
+    # pending / generating_video / ready_to_merge / completed / failed / cancelled
     status: Mapped[str] = mapped_column(String(30), default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_video_path: Mapped[str | None] = mapped_column(Text, nullable=True)
