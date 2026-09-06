@@ -225,6 +225,8 @@ export default function VlogPanel({ config, styles }: Props) {
     setUploading(true)
     setError('')
     setProject(null)
+    // 本地动效不依赖服务端项目，清掉记录避免旧项目在刷新后复活
+    localStorage.removeItem(LAST_VLOG_KEY)
     clearLocalResult()
     const next: LocalImage[] = []
     try {
@@ -362,6 +364,8 @@ export default function VlogPanel({ config, styles }: Props) {
   const busy =
     uploading || planning || submitting || localRendering || !!mergeProgress ||
     !!project && ['pending', 'generating_video'].includes(project.status)
+  // 只有进行中的项目才锁定来源切换；failed/completed/cancelled 是终态，可随时改用本地动效
+  const activeProject = !!project && ['pending', 'generating_video', 'ready_to_merge'].includes(project.status)
   const canGenerate =
     !busy && !project && (sourceMode === 'motion'
       ? localImages.length >= 1
@@ -400,7 +404,7 @@ export default function VlogPanel({ config, styles }: Props) {
                 className={sourceMode === 'ai' ? 'selected' : ''}
                 type="button"
                 aria-pressed={sourceMode === 'ai'}
-                disabled={!!project || busy}
+                disabled={busy || activeProject}
                 onClick={() => setSourceMode('ai')}
               >
                 AI 视频片段
@@ -409,7 +413,7 @@ export default function VlogPanel({ config, styles }: Props) {
                 className={sourceMode === 'motion' ? 'selected' : ''}
                 type="button"
                 aria-pressed={sourceMode === 'motion'}
-                disabled={!!project || busy}
+                disabled={busy || activeProject}
                 onClick={() => setSourceMode('motion')}
               >
                 本地图片动效
@@ -638,7 +642,7 @@ export default function VlogPanel({ config, styles }: Props) {
                   {' '}{VLOG_TRANSITIONS.find((item) => item.key === project.transition_style)?.label ?? project.transition_style}
                 </p>
               </div>
-              {['completed', 'cancelled'].includes(project.status) && (
+              {['completed', 'cancelled', 'failed'].includes(project.status) && (
                 <button className="btn" type="button" onClick={reset}>新建 Vlog</button>
               )}
               {['pending', 'generating_video'].includes(project.status) && (
