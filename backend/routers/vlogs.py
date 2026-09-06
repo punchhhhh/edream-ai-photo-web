@@ -27,6 +27,7 @@ from ..services.vlog_pipeline import (
     plan_reference_groups,
     start_vlog_thread,
 )
+from ..services.vlog_transitions import normalize_vlog_transition
 from ..settings import settings
 from .auth import get_current_user
 
@@ -53,6 +54,7 @@ def _project_out(db: Session, project: VlogProject) -> VlogProjectOut:
         ratio=project.ratio,
         resolution=project.resolution,
         target_duration=project.target_duration,
+        transition_style=project.transition_style,
         status=project.status,
         error=project.error,
         final_video_url=storage.url(project.final_video_path),
@@ -225,6 +227,10 @@ def create_vlog(
         raise HTTPException(409, f"已有 Vlog 正在处理（项目 {active.id}）")
 
     style = payload.style.strip() or "写实纪录"
+    try:
+        transition_style = normalize_vlog_transition(payload.transition_style)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     preset = db.scalar(select(StylePreset).where(StylePreset.name == style))
     style_description = preset.description if preset else "自然光、真实质感、克制运镜"
     ratio = _infer_ratio(payload.image_paths)
@@ -238,6 +244,7 @@ def create_vlog(
         ratio=ratio,
         resolution="720p",
         target_duration=target_duration,
+        transition_style=transition_style,
         status="pending",
         config_id=config.id,
         config_name=config.name,
@@ -352,6 +359,9 @@ def complete_vlog(
     project = _get_project(db, user, project_id)
     if project.status != "ready_to_merge":
         raise HTTPException(409, "两个片段尚未全部生成完成")
+    clips = db.scalars(select(VlogClip).where(VlogClip.project_id == project.id)).all()
+    if not clips or any(clip.status != "completed" for clip in clips):
+        raise HTTPException(409, "两个片段尚未全部生成完成")
     if not (file.content_type or "").lower().startswith("video/"):
         raise HTTPException(422, "仅支持视频文件")
     head = file.file.read(1024 * 1024)
@@ -370,7 +380,7 @@ def complete_vlog(
         raise HTTPException(422, f"Vlog 成片不能超过 {settings.max_video_upload_mb}MB") from None
 
     creation = Creation(
-        user_id=user.id,
+        user_id=project.user_id,
         input_text=project.description or f"{project.style} Vlog",
         style=project.style,
         expanded_prompt=f"Vlog {len(project.image_paths)} 张图片自然转场合成",

@@ -1,4 +1,11 @@
-import type { AuthUser, Creation, ModelConfig, StylePreset, VlogProject, VlogUploadPlan } from './types'
+import type {
+  AuthUser,
+  Creation,
+  ModelConfig,
+  StylePreset,
+  VlogProject,
+  VlogUploadPlan,
+} from './types'
 
 // 配置表单里用户本次输入的内容;编辑已存配置时 api_key 留空表示保留原密钥
 export type ConfigForm = Omit<ModelConfig, 'id' | 'api_key_masked' | 'created_at' | 'updated_at'> & {
@@ -121,6 +128,7 @@ export const createVlog = (payload: {
   image_paths: string[]
   style: string
   description: string
+  transition_style: string
 }) => request<VlogProject>('/api/vlogs', { method: 'POST', body: JSON.stringify(payload) })
 
 export const planVlog = (imagePaths: string[]) =>

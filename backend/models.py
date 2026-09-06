@@ -189,6 +189,10 @@ class VlogProject(Base):
     ratio: Mapped[str] = mapped_column(String(10), default="9:16")
     resolution: Mapped[str] = mapped_column(String(20), default="720p")
     target_duration: Mapped[int] = mapped_column(Integer, default=30)
+    # 统一应用到每个场景边界的标准 xfade 模板
+    transition_style: Mapped[str] = mapped_column(
+        String(30), default="fade", server_default="fade"
+    )
     # pending / generating_video / ready_to_merge / completed / failed
     status: Mapped[str] = mapped_column(String(30), default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

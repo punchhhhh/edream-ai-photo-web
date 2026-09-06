@@ -145,6 +145,7 @@ class VlogCreateIn(BaseModel):
     image_paths: list[str] = Field(min_length=2, max_length=9)
     style: str = Field(default="写实纪录", max_length=50)
     description: str = Field(default="", max_length=500)
+    transition_style: str = Field(default="fade", max_length=30)
 
 
 class VlogClipOut(BaseModel):
@@ -168,6 +169,7 @@ class VlogProjectOut(BaseModel):
     ratio: str
     resolution: str
     target_duration: int
+    transition_style: str
     status: str
     error: str | None
     final_video_url: str | None

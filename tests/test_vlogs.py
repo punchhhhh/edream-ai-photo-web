@@ -104,6 +104,7 @@ def test_nine_images_plan_three_scenes_and_variable_duration(client: TestClient)
     assert len(project["clips"]) == 3
     assert [clip["duration"] for clip in project["clips"]] == [10, 10, 10]
     assert project["target_duration"] == 30
+    assert project["transition_style"] == "fade"
     assert client.get("/api/vlogs/latest", headers=_headers()).json()["id"] == project["id"]
 
 

@@ -61,6 +61,27 @@ export interface VlogImage {
   order: number
 }
 
+export type VlogMotionTemplate =
+  | 'kenburns_in'
+  | 'kenburns_out'
+  | 'pan_left'
+  | 'pan_right'
+  | 'drift'
+
+export interface VlogMotionOption {
+  key: VlogMotionTemplate
+  label: string
+  description: string
+}
+
+export const VLOG_MOTION_TEMPLATES: VlogMotionOption[] = [
+  { key: 'kenburns_in', label: '缓慢推进', description: '镜头逐渐靠近主体' },
+  { key: 'kenburns_out', label: '缓慢拉远', description: '从局部展开到完整画面' },
+  { key: 'pan_left', label: '向左平移', description: '横向扫过图片细节' },
+  { key: 'pan_right', label: '向右平移', description: '从左向右浏览画面' },
+  { key: 'drift', label: '轻微漂移', description: '适合人物和旅行照片' },
+]
+
 export interface VlogUploadPlan {
   images: VlogImage[]
   ratio: '9:16' | '16:9'
@@ -89,6 +110,7 @@ export interface VlogProject {
   ratio: '9:16' | '16:9'
   resolution: string
   target_duration: number
+  transition_style: VlogTransition
   status: 'pending' | 'generating_video' | 'ready_to_merge' | 'completed' | 'failed'
   error: string | null
   final_video_url: string | null
@@ -99,6 +121,33 @@ export interface VlogProject {
   created_at: string
   updated_at: string
 }
+
+export type VlogTransition =
+  | 'fade'
+  | 'dissolve'
+  | 'wipeleft'
+  | 'wiperight'
+  | 'slideleft'
+  | 'slideright'
+  | 'circleopen'
+  | 'zoomin'
+
+export interface VlogTransitionOption {
+  key: VlogTransition
+  label: string
+  description: string
+}
+
+export const VLOG_TRANSITIONS: VlogTransitionOption[] = [
+  { key: 'fade', label: '柔和淡化', description: '自然、稳定，适合大多数 Vlog' },
+  { key: 'dissolve', label: '溶解', description: '画面颗粒感溶解过渡' },
+  { key: 'wipeleft', label: '向左擦除', description: '新画面从右向左推入' },
+  { key: 'wiperight', label: '向右擦除', description: '新画面从左向右推入' },
+  { key: 'slideleft', label: '向左滑动', description: '带方向感的连续切换' },
+  { key: 'slideright', label: '向右滑动', description: '适合顺着运动方向衔接' },
+  { key: 'circleopen', label: '圆形展开', description: '从中心向外打开新画面' },
+  { key: 'zoomin', label: '推进切换', description: '新画面快速推进覆盖旧画面' },
+]
 
 export const STATUS_TEXT: Record<string, string> = {
   pending: '排队中',

@@ -11,6 +11,7 @@
  * 单线程 core,不依赖 SharedArrayBuffer/跨域隔离头;重编码长片较慢,适合短视频剪辑。
  */
 import type { FFmpeg } from '@ffmpeg/ffmpeg'
+import type { VlogMotionTemplate, VlogTransition } from '../types'
 
 declare global {
   interface Window {
@@ -246,6 +247,7 @@ export async function mergeClips(urls: string[], onProgress: (p: MergeProgress) 
 interface VlogSource {
   url: string
   duration: number
+  mime?: string
 }
 
 function probeMedia(log: string[], fallbackDuration: number): { duration: number; hasAudio: boolean } {
@@ -261,6 +263,7 @@ function probeMedia(log: string[], fallbackDuration: number): { duration: number
 export async function mergeVlogClips(
   sources: VlogSource[],
   ratio: '9:16' | '16:9',
+  transitionStyle: VlogTransition = 'fade',
   onProgress: (p: MergeProgress) => void,
 ): Promise<MergeResult> {
   if (sources.length === 0) throw new Error('没有可合成的视频片段')
@@ -313,7 +316,7 @@ export async function mergeVlogClips(
       const outputLabel = `vx${index}`
       const offset = Math.max(0, cumulativeDuration - transition * index)
       filters.push(
-        `[${videoLabel}][v${index}]xfade=transition=fade:duration=${transition}:offset=${offset.toFixed(3)}[${outputLabel}]`,
+        `[${videoLabel}][v${index}]xfade=transition=${transitionStyle}:duration=${transition}:offset=${offset.toFixed(3)}[${outputLabel}]`,
       )
       videoLabel = outputLabel
       cumulativeDuration += probes[index].duration
@@ -374,6 +377,134 @@ export async function mergeVlogClips(
     const data = await ff.readFile(outputName)
     const duration = probes.reduce((sum, probe) => sum + probe.duration, 0) - transition * (probes.length - 1)
     onProgress({ stage: 'encode', detail: '合成完成', ratio: 1 })
+    return { blob: toMp4Blob(data), mode: 'encode', duration, logTail: tail() }
+  } finally {
+    await cleanup()
+  }
+}
+
+interface MotionSource {
+  url: string
+  mime?: string
+}
+
+function motionExpression(template: VlogMotionTemplate, frames: number): { z: string; x: string; y: string } {
+  const progress = `on/${frames}`
+  const centerX = 'iw/2-(iw/zoom/2)'
+  const centerY = 'ih/2-(ih/zoom/2)'
+  switch (template) {
+    case 'kenburns_out':
+      return { z: `max(1,1.18-0.18*${progress})`, x: centerX, y: centerY }
+    case 'pan_left':
+      return { z: '1.08', x: `(iw-iw/zoom)*(1-${progress})`, y: centerY }
+    case 'pan_right':
+      return { z: '1.08', x: `(iw-iw/zoom)*${progress}`, y: centerY }
+    case 'drift':
+      return {
+        z: `1.05+0.03*sin(${progress}*PI*2)`,
+        x: `(iw-iw/zoom)*(0.5+0.35*sin(${progress}*PI*2))`,
+        y: `(ih-ih/zoom)*(0.5+0.35*cos(${progress}*PI*2))`,
+      }
+    case 'kenburns_in':
+    default:
+      return { z: `1+0.18*${progress}`, x: centerX, y: centerY }
+  }
+}
+
+/** 将本地图片做成带轻微镜头运动的短视频，再用同一套转场拼接。 */
+export async function mergeImageMotionVlog(
+  sources: MotionSource[],
+  ratio: '9:16' | '16:9',
+  motionTemplate: VlogMotionTemplate,
+  imageDuration: number,
+  transitionStyle: VlogTransition,
+  onProgress: (p: MergeProgress) => void,
+): Promise<MergeResult> {
+  if (sources.length === 0) throw new Error('没有可合成的图片')
+  if (!Number.isFinite(imageDuration) || imageDuration < 2 || imageDuration > 10) {
+    throw new Error('图片片段时长必须在 2–10 秒之间')
+  }
+
+  onProgress({ stage: 'loading-engine', detail: '准备本地合成引擎', ratio: 0 })
+  const ff = await getFFmpeg((ratioValue, detail) => onProgress({ stage: 'loading-engine', detail, ratio: ratioValue }))
+  const [width, height] = ratio === '9:16' ? [720, 1280] : [1280, 720]
+  const frames = Math.max(1, Math.round(imageDuration * 30))
+  const inputNames: string[] = []
+
+  for (let index = 0; index < sources.length; index++) {
+    onProgress({ stage: 'downloading', detail: `读取图片 ${index + 1}/${sources.length}` })
+    const response = await fetch(sources[index].url)
+    if (!response.ok) throw new Error(`图片 ${index + 1} 读取失败(${response.status})`)
+    const data = new Uint8Array(await response.arrayBuffer())
+    const mime = sources[index].mime || response.headers.get('content-type') || ''
+    const extension = mime.includes('png') ? 'png' : 'jpg'
+    const name = `motion-${index}.${extension}`
+    inputNames.push(name)
+    await ff.writeFile(name, data)
+  }
+
+  const outputName = 'motion-vlog-out.mp4'
+  const cleanup = async () => {
+    for (const name of inputNames) await ff.deleteFile(name).catch(() => {})
+    await ff.deleteFile(outputName).catch(() => {})
+  }
+
+  try {
+    const filters: string[] = []
+    const motion = motionExpression(motionTemplate, frames)
+    const baseWidth = width * 2
+    const baseHeight = height * 2
+    for (let index = 0; index < sources.length; index++) {
+      filters.push(
+        `[${index}:v]scale=${baseWidth}:${baseHeight}:force_original_aspect_ratio=increase,` +
+          `crop=${baseWidth}:${baseHeight},zoompan=z='${motion.z}':x='${motion.x}':y='${motion.y}':d=1:s=${width}x${height}:fps=30,` +
+          `trim=duration=${imageDuration},setpts=PTS-STARTPTS,format=yuv420p[v${index}]`,
+      )
+    }
+
+    const transition = sources.length > 1 ? 0.6 : 0
+    let videoLabel = 'v0'
+    let cumulativeDuration = imageDuration
+    for (let index = 1; index < sources.length; index++) {
+      const outputLabel = `motion-x${index}`
+      const offset = Math.max(0, cumulativeDuration - transition * index)
+      filters.push(
+        `[${videoLabel}][v${index}]xfade=transition=${transitionStyle}:duration=${transition}:offset=${offset.toFixed(3)}[${outputLabel}]`,
+      )
+      videoLabel = outputLabel
+      cumulativeDuration += imageDuration
+    }
+
+    onProgress({ stage: 'encode', detail: `正在生成 ${sources.length} 个本地动效片段`, ratio: 0 })
+    progressCb = (progress) => onProgress({ stage: 'encode', detail: '正在渲染图片动效与转场', ratio: progress })
+    let rc: number
+    try {
+      rc = await ff.exec([
+        ...inputNames.flatMap((name) => ['-loop', '1', '-framerate', '30', '-t', String(imageDuration), '-i', name]),
+        '-filter_complex',
+        filters.join(';'),
+        '-map',
+        `[${videoLabel}]`,
+        '-an',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        '-crf',
+        '23',
+        '-pix_fmt',
+        'yuv420p',
+        '-movflags',
+        '+faststart',
+        outputName,
+      ])
+    } finally {
+      progressCb = null
+    }
+    if (rc !== 0) throw new Error(`图片动效合成失败：${tail().slice(-1)[0] ?? '请重试'}`)
+    const data = await ff.readFile(outputName)
+    const duration = imageDuration * sources.length - transition * Math.max(0, sources.length - 1)
+    onProgress({ stage: 'encode', detail: '本地动效合成完成', ratio: 1 })
     return { blob: toMp4Blob(data), mode: 'encode', duration, logTail: tail() }
   } finally {
     await cleanup()

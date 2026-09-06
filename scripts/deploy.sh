@@ -34,7 +34,22 @@ if [ -z "${DEPLOY_SKIP_FRONTEND:-}" ]; then
   command -v npm >/dev/null 2>&1 || { echo "!! 找不到 npm,请先安装 Node 或用 DEPLOY_SKIP_FRONTEND=1 跳过前端"; exit 1; }
 
   echo "==> 构建前端"
-  (cd frontend && [ -d node_modules ] || npm install; npm run build)
+  (
+    cd frontend
+    # public/ffmpeg 是浏览器 Vlog 合成的静态依赖;缺失时重新执行 postinstall 复制。
+    if [ ! -d node_modules ] || [ ! -f public/ffmpeg/ffmpeg-core.js ] || \
+      [ ! -f public/ffmpeg/ffmpeg-core.wasm ] || [ ! -f public/ffmpeg/814.ffmpeg.js ] || \
+      [ ! -f public/ffmpeg/ffmpeg.js ]; then
+      npm install
+    fi
+    for asset in ffmpeg-core.js ffmpeg-core.wasm 814.ffmpeg.js ffmpeg.js; do
+      [ -f "public/ffmpeg/$asset" ] || { echo "!! 缺少 frontend/public/ffmpeg/$asset"; exit 1; }
+    done
+    npm run build
+    for asset in ffmpeg-core.js ffmpeg-core.wasm 814.ffmpeg.js ffmpeg.js; do
+      [ -f "dist/ffmpeg/$asset" ] || { echo "!! 构建产物缺少 frontend/dist/ffmpeg/$asset"; exit 1; }
+    done
+  )
 fi
 
 echo "==> 上传产物(服务器临时目录)"
