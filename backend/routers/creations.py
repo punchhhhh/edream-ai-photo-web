@@ -178,7 +178,7 @@ def create_merged_creation(
     file: UploadFile = File(...),
     title: str = Form("剪辑合成"),
     source_ids: str = Form("[]"),
-    total_duration: int = Form(0),
+    total_duration: float = Form(0),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -212,7 +212,7 @@ def create_merged_creation(
         style="",
         expanded_prompt=f"浏览器端合成 · {len(source_id_list)} 段素材",
         image_source="merged",
-        duration=max(0, min(total_duration, 3600)),
+        duration=max(0, min(round(total_duration), 3600)),
         status="completed",
         config_name="",
         chat_model="",

@@ -80,6 +80,13 @@ def _create_project(client: TestClient, upload: dict, config_id: int, sub: str =
     return response.json()
 
 
+def test_latest_vlog_returns_empty_value_when_user_has_no_projects(client: TestClient) -> None:
+    response = client.get("/api/vlogs/latest", headers=_headers("new-vlog-user"))
+
+    assert response.status_code == 200, response.text
+    assert response.json() is None
+
+
 def test_upload_normalizes_orientation_and_returns_exact_plan(client: TestClient) -> None:
     files = [
         ("files", ("rotated.jpg", _jpeg(1800, 1000, (80, 130, 100), orientation=6), "image/jpeg")),

@@ -106,8 +106,8 @@ def _normalize_image(data: bytes) -> tuple[bytes, int, int]:
 def upload_vlog_images(
     files: list[UploadFile] = File(...), user: User = Depends(get_current_user)
 ):
-    if not 2 <= len(files) <= 9:
-        raise HTTPException(422, "一次请选择 2–9 张图片")
+    if not 1 <= len(files) <= 9:
+        raise HTTPException(422, "一次请选择 1–9 张图片")
 
     per_file_limit = settings.max_upload_mb * 1024 * 1024
     total_limit = settings.max_vlog_upload_total_mb * 1024 * 1024
@@ -233,8 +233,16 @@ def create_vlog(
         raise HTTPException(422, str(exc)) from exc
     preset = db.scalar(select(StylePreset).where(StylePreset.name == style))
     style_description = preset.description if preset else "自然光、真实质感、克制运镜"
-    ratio = _infer_ratio(payload.image_paths)
-    groups = plan_reference_groups(payload.image_paths)
+    ratio = payload.ratio or _infer_ratio(payload.image_paths)
+    groups = payload.image_groups or plan_reference_groups(payload.image_paths)
+    if payload.image_groups is not None:
+        flattened = [path for group in payload.image_groups for path in group]
+        if flattened != payload.image_paths:
+            raise HTTPException(422, "图片分组必须覆盖全部图片且保持时间线顺序")
+        if any(not 1 <= len(group) <= 4 for group in payload.image_groups):
+            raise HTTPException(422, "每个 AI 图生视频组需要 1–4 张图片")
+        if not payload.image_groups:
+            raise HTTPException(422, "至少需要一个 AI 图生视频组")
     target_duration = sum(5 if len(group) == 1 else 10 for group in groups)
     project = VlogProject(
         user_id=user.id,
@@ -282,7 +290,7 @@ def create_vlog(
     return _project_out(db, project)
 
 
-@router.get("/vlogs/latest", response_model=VlogProjectOut)
+@router.get("/vlogs/latest", response_model=VlogProjectOut | None)
 def get_latest_vlog(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -293,7 +301,8 @@ def get_latest_vlog(
         .order_by(VlogProject.id.desc())
     ).first()
     if project is None:
-        raise HTTPException(404, "暂无 Vlog 项目")
+        # 空历史是首次使用时的正常状态，不应被浏览器记录为请求错误。
+        return None
     return _project_out(db, project)
 
 
@@ -352,7 +361,7 @@ def retry_vlog_clip(
 def complete_vlog(
     project_id: int,
     file: UploadFile = File(...),
-    actual_duration: int = Form(29),
+    actual_duration: float = Form(29),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -387,7 +396,7 @@ def complete_vlog(
         image_source="merged",
         image_path=project.image_paths[0] if project.image_paths else None,
         video_path=video_path,
-        duration=max(1, min(actual_duration, 3600)),
+        duration=max(1, min(round(actual_duration), 3600)),
         status="completed",
         config_id=project.config_id,
         config_name=project.config_name,

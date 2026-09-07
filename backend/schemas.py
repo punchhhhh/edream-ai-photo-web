@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -124,7 +125,7 @@ class VlogPlanClipOut(BaseModel):
 
 
 class VlogPlanIn(BaseModel):
-    image_paths: list[str] = Field(min_length=2, max_length=9)
+    image_paths: list[str] = Field(min_length=1, max_length=9)
 
 
 class VlogPlanOut(BaseModel):
@@ -142,7 +143,12 @@ class VlogUploadOut(BaseModel):
 
 class VlogCreateIn(BaseModel):
     config_id: int
-    image_paths: list[str] = Field(min_length=2, max_length=9)
+    # 手动组装时每个 AI 组最多 4 张图，允许多个组加入同一个 Vlog。
+    image_paths: list[str] = Field(min_length=1, max_length=36)
+    # 前端手动维护的 AI 片段组。未传时兼容旧客户端，继续按图片自动规划。
+    image_groups: list[list[str]] | None = None
+    # 未传时兼容旧客户端，继续按图片方向推断画幅。
+    ratio: Literal["9:16", "16:9"] | None = None
     style: str = Field(default="写实纪录", max_length=50)
     description: str = Field(default="", max_length=500)
     transition_style: str = Field(default="fade", max_length=30)
