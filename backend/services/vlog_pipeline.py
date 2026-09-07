@@ -82,8 +82,9 @@ def build_clip_prompt(
     description: str,
     ratio: str,
     duration: int,
+    group_description: str = "",
 ) -> str:
-    intent = description.strip() or "记录图片中的这次真实经历，不添加新的地点、人物或事件"
+    intent = group_description.strip() or description.strip() or "记录图片中的这次真实经历，不添加新的地点、人物或事件"
     phase = (
         "首段负责建立环境与人物关系，镜头从较宽的环境景别自然靠近主体"
         if sequence == 1

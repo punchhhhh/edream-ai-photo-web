@@ -239,10 +239,15 @@ def create_vlog(
         flattened = [path for group in payload.image_groups for path in group]
         if flattened != payload.image_paths:
             raise HTTPException(422, "图片分组必须覆盖全部图片且保持时间线顺序")
-        if any(not 1 <= len(group) <= 4 for group in payload.image_groups):
-            raise HTTPException(422, "每个 AI 图生视频组需要 1–4 张图片")
+        if any(not 1 <= len(group) <= 9 for group in payload.image_groups):
+            raise HTTPException(422, "每个 AI 图生视频组需要 1–9 张图片")
         if not payload.image_groups:
             raise HTTPException(422, "至少需要一个 AI 图生视频组")
+        if payload.image_group_descriptions is not None and len(payload.image_group_descriptions) != len(payload.image_groups):
+            raise HTTPException(422, "每个 AI 图生视频组都需要对应一段描述")
+    elif payload.image_group_descriptions is not None:
+        raise HTTPException(422, "没有图片分组时不能传入组描述")
+    group_descriptions = payload.image_group_descriptions or [""] * len(groups)
     target_duration = sum(5 if len(group) == 1 else 10 for group in groups)
     project = VlogProject(
         user_id=user.id,
@@ -273,6 +278,7 @@ def create_vlog(
                     style=style,
                     style_description=style_description,
                     description=project.description,
+                    group_description=group_descriptions[sequence - 1],
                     ratio=ratio,
                     duration=clip_duration,
                 ),
