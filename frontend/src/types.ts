@@ -36,6 +36,7 @@ export interface Creation {
   chat_model: string
   image_model: string
   video_model: string
+  vlog_project_id: number | null
   created_at: string
   updated_at: string
 }
@@ -107,6 +108,7 @@ export interface VlogProject {
   style: string
   image_paths: string[]
   image_urls: string[]
+  timeline_data: Array<Record<string, unknown>>
   ratio: '9:16' | '16:9'
   resolution: string
   target_duration: number

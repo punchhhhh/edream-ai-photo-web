@@ -35,6 +35,7 @@ export default function App() {
   const [configId, setConfigId] = useState<number | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [vlogEditCreation, setVlogEditCreation] = useState<Creation | null>(null)
 
   // 步骤状态
   const [text, setText] = useState('')
@@ -244,6 +245,15 @@ export default function App() {
     setHistoryOpen(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  const editVlogFromHistory = useCallback((source: Creation) => {
+    setWorkspace('vlog')
+    setVlogEditCreation(source)
+    setHistoryOpen(false)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+
+  const clearVlogEditCreation = useCallback(() => setVlogEditCreation(null), [])
 
   const resetAll = () => {
     setText('')
@@ -559,7 +569,12 @@ export default function App() {
             )}
           </div>,
         )}
-      </main> : <VlogPanel config={config} styles={styles} />}
+      </main> : <VlogPanel
+        config={config}
+        styles={styles}
+        editCreation={vlogEditCreation}
+        onEditCreationLoaded={clearVlogEditCreation}
+      />}
 
       {configOpen && (
         <ConfigPanel
@@ -581,6 +596,7 @@ export default function App() {
             if (creation?.id === id) setCreation(null)
           }}
           onReuse={reuseCreation}
+          onEditVlog={editVlogFromHistory}
         />
       )}
     </div>

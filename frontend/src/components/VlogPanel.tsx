@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   abandonVlog,
   completeVlog,
+  createLocalVlog,
   createVlog,
   getLatestVlog,
   getVlog,
@@ -9,6 +10,7 @@ import {
   retryVlogClip,
   saveMergedVideo,
   uploadVlogImages,
+  uploadVlogVideo,
 } from '../api'
 import {
   mergeImageMotionVlog,
@@ -36,14 +38,16 @@ const LOCAL_ASSET_DB = 'edream-vlog-local-assets'
 const LOCAL_ASSET_STORE = 'files'
 
 type GroupMode = 'ai' | 'motion' | 'video'
-type VideoKind = 'local' | 'history'
+type VideoKind = 'local' | 'history' | 'server'
 
 interface LocalImage {
   id: string
-  file: File
+  file?: File
   url: string
   width: number
   height: number
+  mime: string
+  serverImage?: VlogImage
 }
 
 interface VideoAsset {
@@ -55,6 +59,10 @@ interface VideoAsset {
   mime?: string
   forceEncode?: boolean
   creation?: Creation
+  historyId?: number
+  serverPath?: string
+  // kind === 'local' 时 url 是 blob 地址，这里保存上传成功后的服务端播放地址供草稿恢复使用
+  serverUrl?: string
 }
 
 interface LocalResult {
@@ -80,6 +88,8 @@ interface SceneGroup {
 interface Props {
   config: ModelConfig | null
   styles: StylePreset[]
+  editCreation: Creation | null
+  onEditCreationLoaded: () => void
 }
 
 interface PersistedTimelineGroup {
@@ -91,6 +101,9 @@ interface PersistedTimelineGroup {
   motionTemplate?: VlogMotionTemplate
   localAssetKey?: string
   historyCreationId?: number
+  // 服务端素材引用：刷新/编辑副本后无需重新上传即可重新提交
+  serverImage?: VlogImage
+  serverVideo?: { path?: string; url?: string; name?: string; mime?: string }
 }
 
 interface PersistedTimelineDraft {
@@ -219,8 +232,49 @@ function toPersistedGroups(groups: SceneGroup[]): PersistedTimelineGroup[] {
     duration: group.duration,
     motionTemplate: group.motionTemplate,
     localAssetKey: group.mode !== 'ai' ? group.localAssetKey ?? undefined : undefined,
-    historyCreationId: group.mode === 'video' && group.video?.kind === 'history' ? group.video.creation?.id : undefined,
+    serverImage: group.mode === 'motion' ? group.localImage?.serverImage : undefined,
+    historyCreationId: group.mode === 'video' && group.video?.kind === 'history'
+      ? group.video.creation?.id ?? group.video.historyId
+      : undefined,
+    serverVideo: group.mode === 'video' && group.video?.serverPath
+      ? {
+          path: group.video.serverPath,
+          url: group.video.kind === 'local' ? group.video.serverUrl : group.video.url,
+          name: group.video.name,
+          mime: group.video.mime,
+        }
+      : undefined,
   }))
+}
+
+function toServerTimeline(groups: SceneGroup[]): Array<Record<string, unknown>> {
+  return groups.map((group) => {
+    if (group.mode === 'ai') return { id: group.id, mode: 'ai', description: group.description.trim() }
+    if (group.mode === 'motion') {
+      if (!group.localImage?.serverImage) throw new Error('图片动效素材尚未上传完成，请重新选择图片')
+      return {
+        id: group.id,
+        mode: 'motion',
+        image_path: group.localImage.serverImage.image_path,
+        duration: group.duration,
+        motion_template: group.motionTemplate,
+      }
+    }
+    if (!group.video) throw new Error('请先选择视频素材')
+    if (group.video.kind === 'history' && (group.video.creation || group.video.historyId)) {
+      return { id: group.id, mode: 'video', source: 'history', creation_id: group.video.creation?.id ?? group.video.historyId, duration: group.video.duration }
+    }
+    if (!group.video.serverPath) throw new Error('本地视频尚未上传完成，请重新选择视频')
+    return {
+      id: group.id,
+      mode: 'video',
+      source: 'upload',
+      asset_path: group.video.serverPath,
+      duration: group.video.duration,
+      name: group.video.name,
+      mime: group.video.mime ?? 'video/mp4',
+    }
+  })
 }
 
 function sameAiTimeline(draft: PersistedTimelineDraft, project: VlogProject): boolean {
@@ -231,7 +285,70 @@ function sameAiTimeline(draft: PersistedTimelineDraft, project: VlogProject): bo
   return JSON.stringify(draftPaths) === JSON.stringify(projectPaths)
 }
 
+function serverVideoAsset(
+  groupId: string,
+  info: { url: string; duration: number; path?: string; name?: string; mime?: string; historyId?: number; history?: boolean },
+): VideoAsset {
+  return {
+    id: `server-${groupId}`,
+    name: info.name ?? '已保存视频',
+    url: info.url,
+    duration: info.duration,
+    kind: info.history ? 'history' : 'server',
+    mime: info.mime,
+    forceEncode: !isMp4Url(info.url),
+    historyId: info.historyId,
+    serverPath: info.path,
+  }
+}
+
 function groupsFromProject(project: VlogProject): SceneGroup[] {
+  if (project.timeline_data?.length) {
+    let aiIndex = 0
+    return project.timeline_data.map((item) => {
+      const mode = item.mode
+      const id = typeof item.id === 'string' ? item.id : crypto.randomUUID()
+      if (mode === 'ai') {
+        const clip = project.clips[aiIndex++]
+        if (!clip) return newGroup('ai')
+        return {
+          ...newGroup('ai'),
+          id,
+          description: typeof item.description === 'string' ? item.description : '',
+          images: clip.reference_paths.map((path, index) => ({
+            image_path: path, url: clip.reference_urls[index] ?? '', width: project.ratio === '9:16' ? 720 : 1280,
+            height: project.ratio === '9:16' ? 1280 : 720, order: index,
+          })),
+          duration: clip.duration,
+        }
+      }
+      if (mode === 'motion' && typeof item.image_path === 'string' && typeof item.image_url === 'string') {
+        return {
+          ...newGroup('motion'), id, duration: typeof item.duration === 'number' ? item.duration : 4,
+          motionTemplate: typeof item.motion_template === 'string' ? item.motion_template as VlogMotionTemplate : 'kenburns_in',
+          localImage: {
+            id, url: item.image_url, width: 0, height: 0, mime: 'image/jpeg',
+            serverImage: { image_path: item.image_path, url: item.image_url, width: 0, height: 0, order: 0 },
+          },
+        }
+      }
+      if (mode === 'video' && typeof item.video_url === 'string') {
+        return {
+          ...newGroup('video'), id, duration: typeof item.duration === 'number' ? item.duration : 5,
+          video: serverVideoAsset(id, {
+            url: item.video_url,
+            duration: typeof item.duration === 'number' ? item.duration : 5,
+            path: typeof item.asset_path === 'string' ? item.asset_path : undefined,
+            name: typeof item.name === 'string' ? item.name : '已保存视频',
+            mime: typeof item.mime === 'string' ? item.mime : undefined,
+            historyId: typeof item.creation_id === 'number' ? item.creation_id : undefined,
+            history: item.source === 'history',
+          }),
+        }
+      }
+      return newGroup('video')
+    })
+  }
   return project.clips.map((clip) => ({
     ...newGroup('ai'),
     images: clip.reference_paths.map((path, index) => ({
@@ -246,6 +363,11 @@ function groupsFromProject(project: VlogProject): SceneGroup[] {
 }
 
 function hydrateGroups(project: VlogProject, history: Creation[]): SceneGroup[] {
+  const timelineById = new Map<string, Record<string, unknown>>(
+    (project.timeline_data ?? [])
+      .filter((item) => typeof item.id === 'string')
+      .map((item) => [item.id as string, item]),
+  )
   const draft = readTimelineDraft()
   if (!draft || draft.projectId !== project.id || !sameAiTimeline(draft, project)) return groupsFromProject(project)
 
@@ -271,22 +393,31 @@ function hydrateGroups(project: VlogProject, history: Creation[]): SceneGroup[] 
     }
 
     if (saved.mode === 'motion') {
+      // 草稿里存有服务端引用时直接使用；旧草稿则回退到项目 timeline_data 里的同组素材。
+      const timelineItem = timelineById.get(saved.id)
+      const serverImage = saved.serverImage
+        ?? (typeof timelineItem?.image_path === 'string' && typeof timelineItem?.image_url === 'string'
+          ? { image_path: timelineItem.image_path as string, url: timelineItem.image_url as string, width: 0, height: 0, order: 0 }
+          : undefined)
       return {
         ...newGroup('motion'),
         id: saved.id,
         localAssetKey: saved.localAssetKey ?? saved.id,
         duration: saved.duration ?? 4,
         motionTemplate: saved.motionTemplate ?? 'kenburns_in',
+        localImage: serverImage
+          ? { id: saved.id, url: serverImage.url, width: 0, height: 0, mime: 'image/jpeg', serverImage }
+          : null,
       }
     }
 
     const creation = saved.historyCreationId ? historyById.get(saved.historyCreationId) : undefined
-    return {
-      ...newGroup('video'),
-      id: saved.id,
-      localAssetKey: saved.localAssetKey ?? null,
-      duration: saved.duration ?? 5,
-      video: creation?.video_url ? {
+    const timelineItem = timelineById.get(saved.id)
+    const savedVideo = saved.serverVideo
+    const duration = saved.duration ?? 5
+    let video: VideoAsset | null = null
+    if (creation?.video_url) {
+      video = {
         id: `history-${creation.id}`,
         name: creation.input_text || `历史视频 ${creation.id}`,
         url: creation.video_url,
@@ -294,7 +425,27 @@ function hydrateGroups(project: VlogProject, history: Creation[]): SceneGroup[] 
         kind: 'history',
         forceEncode: !isMp4Url(creation.video_url),
         creation,
-      } : null,
+      }
+    } else {
+      const url = savedVideo?.url ?? (typeof timelineItem?.video_url === 'string' ? timelineItem.video_url : undefined)
+      if (url) {
+        video = serverVideoAsset(saved.id, {
+          url,
+          duration,
+          path: savedVideo?.path ?? (typeof timelineItem?.asset_path === 'string' ? timelineItem.asset_path : undefined),
+          name: savedVideo?.name ?? (typeof timelineItem?.name === 'string' ? timelineItem.name : undefined),
+          mime: savedVideo?.mime ?? (typeof timelineItem?.mime === 'string' ? timelineItem.mime : undefined),
+          historyId: saved.historyCreationId ?? (typeof timelineItem?.creation_id === 'number' ? timelineItem.creation_id : undefined),
+          history: !!saved.historyCreationId || timelineItem?.source === 'history',
+        })
+      }
+    }
+    return {
+      ...newGroup('video'),
+      id: saved.id,
+      localAssetKey: saved.localAssetKey ?? null,
+      duration,
+      video,
     }
   })
 }
@@ -303,7 +454,7 @@ function readImage(file: File): Promise<LocalImage> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const image = new Image()
-    image.onload = () => resolve({ id: crypto.randomUUID(), file, url, width: image.naturalWidth, height: image.naturalHeight })
+    image.onload = () => resolve({ id: crypto.randomUUID(), file, url, width: image.naturalWidth, height: image.naturalHeight, mime: file.type || 'image/jpeg' })
     image.onerror = () => {
       URL.revokeObjectURL(url)
       reject(new Error(`${file.name} 不是可读取的图片`))
@@ -334,7 +485,7 @@ function readVideo(file: File): Promise<VideoAsset> {
   })
 }
 
-export default function VlogPanel({ config, styles }: Props) {
+export default function VlogPanel({ config, styles, editCreation, onEditCreationLoaded }: Props) {
   const [groups, setGroups] = useState<SceneGroup[]>([newGroup()])
   const [style, setStyle] = useState('写实纪录')
   const [description, setDescription] = useState('')
@@ -348,6 +499,7 @@ export default function VlogPanel({ config, styles }: Props) {
   const [error, setError] = useState('')
   const [progress, setProgress] = useState<MergeProgress | null>(null)
   const [openHistoryGroup, setOpenHistoryGroup] = useState<string | null>(null)
+  const [copySource, setCopySource] = useState<{ id: number; hasOriginalTimeline: boolean } | null>(null)
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const mountedRef = useRef(false)
   const localImageUrls = useRef<string[]>([])
@@ -356,6 +508,7 @@ export default function VlogPanel({ config, styles }: Props) {
   const resultSaveId = useRef(0)
   const resultSaveInFlight = useRef(false)
   const appendAiImagesRef = useRef<string | null>(null)
+  const initialEditCreation = useRef(editCreation)
 
   const aiGroups = useMemo(() => groups.filter((group) => group.mode === 'ai'), [groups])
   const hasAiGroups = aiGroups.length > 0
@@ -409,6 +562,8 @@ export default function VlogPanel({ config, styles }: Props) {
   const restoreLocalAssets = async (sourceGroups: SceneGroup[]) => {
     const restored = await Promise.all(sourceGroups.map(async (group) => {
       if (group.mode === 'ai' || !group.localAssetKey) return null
+      // 已带服务端引用的组无需再读本地文件（合成与重新提交都直接用服务端地址）
+      if ((group.mode === 'motion' && group.localImage) || (group.mode === 'video' && group.video)) return null
       const file = await loadLocalAsset(group.localAssetKey).catch(() => null)
       if (!file) return null
       try {
@@ -445,8 +600,53 @@ export default function VlogPanel({ config, styles }: Props) {
     }))
   }
 
+  const startProjectCopy = (source: VlogProject, historyList: Creation[] = history) => {
+    revokeGroupAssets()
+    const sourceGroups = hydrateGroups(source, historyList)
+    setProject(null)
+    setGroups(sourceGroups)
+    setStyle(source.style)
+    setDescription(source.description)
+    setTransitionStyle(source.transition_style ?? 'fade')
+    setRatio(source.ratio === '9:16' ? '9:16' : '16:9')
+    setCopySource({ id: source.id, hasOriginalTimeline: true })
+    setOpenHistoryGroup(null)
+    clearResult()
+    void restoreLocalAssets(sourceGroups)
+    localStorage.removeItem(LAST_VLOG_KEY)
+  }
+
+  const startMergedVideoEdit = (source: Creation) => {
+    if (!source.video_url) throw new Error('这条历史记录没有可读取的视频文件')
+    revokeGroupAssets()
+    const group = newGroup('video')
+    group.video = {
+      id: `history-${source.id}`,
+      name: source.input_text || `历史视频 ${source.id}`,
+      url: source.video_url,
+      duration: source.duration,
+      kind: 'history',
+      forceEncode: !isMp4Url(source.video_url),
+      creation: source,
+    }
+    setProject(null)
+    setGroups([group])
+    setStyle(source.style || '写实纪录')
+    setDescription(source.input_text)
+    setCopySource({ id: source.id, hasOriginalTimeline: false })
+    setOpenHistoryGroup(null)
+    clearResult()
+    localStorage.removeItem(LAST_VLOG_KEY)
+  }
+
+  const loadReusableHistory = async (): Promise<Creation[]> =>
+    (await listCreations(100).catch(() => []))
+      .filter((item) => item.status === 'completed' && item.video_url)
+
   useEffect(() => {
     mountedRef.current = true
+    const imageUrls = localImageUrls.current
+    const videoUrls = localVideoUrls.current
     let disposed = false
     const loadProject = async () => {
       const id = Number(localStorage.getItem(LAST_VLOG_KEY))
@@ -461,8 +661,7 @@ export default function VlogPanel({ config, styles }: Props) {
     }
 
     const load = async () => {
-      const reusableHistory = (await listCreations(100).catch(() => []))
-        .filter((item) => item.status === 'completed' && item.video_url)
+      const reusableHistory = await loadReusableHistory()
       if (disposed) return
       setHistory(reusableHistory)
 
@@ -479,17 +678,60 @@ export default function VlogPanel({ config, styles }: Props) {
       localStorage.setItem(LAST_VLOG_KEY, String(saved.id))
     }
 
-    load()
+    if (!initialEditCreation.current) load()
     return () => {
       disposed = true
       mountedRef.current = false
-      localImageUrls.current.forEach((url) => URL.revokeObjectURL(url))
-      localVideoUrls.current.forEach((url) => URL.revokeObjectURL(url))
+      imageUrls.forEach((url) => URL.revokeObjectURL(url))
+      videoUrls.forEach((url) => URL.revokeObjectURL(url))
       resultSaveId.current += 1
       resultSaveInFlight.current = false
       if (resultUrl.current) URL.revokeObjectURL(resultUrl.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (!editCreation) return
+    let disposed = false
+
+    const loadCopy = async () => {
+      if (project && isActiveProject(project)
+        && !window.confirm('当前有正在进行的 Vlog 项目。打开编辑副本会切换到新草稿，原项目会继续生成、不受影响。确定打开？')) {
+        onEditCreationLoaded()
+        return
+      }
+      setBusy(true)
+      setError('')
+      try {
+        // 编辑副本模式不会走常规初始化，历史列表要在这里补加载：
+        // 「选择历史视频」选择器和草稿里历史视频组的回填都依赖它。
+        const reusableHistory = await loadReusableHistory()
+        if (disposed) return
+        setHistory(reusableHistory)
+        if (editCreation.vlog_project_id) {
+          const source = await getVlog(editCreation.vlog_project_id)
+          if (source.status !== 'completed') throw new Error('只有已完成的 Vlog 可以作为编辑副本打开')
+          if (!disposed) startProjectCopy(source, reusableHistory)
+        } else if (!disposed) {
+          startMergedVideoEdit(editCreation)
+        }
+      } catch (cause) {
+        if (!disposed) setError(`无法打开 Vlog 编辑副本：${(cause as Error).message}`)
+      } finally {
+        if (!disposed) {
+          setBusy(false)
+          onEditCreationLoaded()
+        }
+      }
+    }
+
+    void loadCopy()
+    return () => {
+      disposed = true
+    }
+    // 只在用户明确从历史记录打开 Vlog 时加载一次，避免覆盖工作中的草稿。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editCreation, onEditCreationLoaded])
 
   useEffect(() => {
     if (!project || !isActiveProject(project)) return
@@ -575,7 +817,8 @@ export default function VlogPanel({ config, styles }: Props) {
     setBusy(true)
     setError('')
     try {
-      const image = await readImage(file)
+      const [image, uploaded] = await Promise.all([readImage(file), uploadVlogImages([file])])
+      image.serverImage = uploaded.images[0]
       try {
         await saveLocalAsset(id, file)
       } catch (cause) {
@@ -601,7 +844,9 @@ export default function VlogPanel({ config, styles }: Props) {
     setBusy(true)
     setError('')
     try {
-      const video = await readVideo(file)
+      const [video, uploaded] = await Promise.all([readVideo(file), uploadVlogVideo(file)])
+      video.serverPath = uploaded.asset_path
+      video.serverUrl = uploaded.url
       const old = groups.find((group) => group.id === id)?.video
       try {
         await saveLocalAsset(id, file)
@@ -678,7 +923,7 @@ export default function VlogPanel({ config, styles }: Props) {
           sources.push({ url: group.video.url, duration: group.video.duration, mime: group.video.mime, forceEncode: group.video.forceEncode })
         } else if (group.mode === 'motion' && group.localImage) {
           const motion = await mergeImageMotionVlog(
-            [{ url: group.localImage.url, mime: group.localImage.file.type }],
+            [{ url: group.localImage.url, mime: group.localImage.mime }],
             ratio,
             group.motionTemplate,
             group.duration,
@@ -731,7 +976,8 @@ export default function VlogPanel({ config, styles }: Props) {
             const completed = await completeVlog(current.id, merged.blob, duration)
             if (resultSaveId.current !== saveId) return
             setProject(completed)
-            localStorage.removeItem(VLOG_TIMELINE_KEY)
+            // 保留同浏览器里的时间线草稿，之后从历史项目创建副本时可恢复本地素材。
+            persistDraft(completed.id)
           } else {
             await saveMergedVideo(merged.blob, {
               title: description.trim() || 'Vlog 剪辑合成',
@@ -764,7 +1010,32 @@ export default function VlogPanel({ config, styles }: Props) {
 
   const submit = async () => {
     if (!canGenerate) return
-    if (!hasAiGroups) return mergeFinal(null)
+    if (!hasAiGroups) {
+      setBusy(true)
+      setError('')
+      let created: VlogProject | null = null
+      try {
+        created = await createLocalVlog({
+          ratio,
+          style,
+          description: description.trim(),
+          transition_style: transitionStyle,
+          timeline_data: toServerTimeline(groups),
+        })
+        setProject(created)
+        setCopySource(null)
+        localStorage.setItem(LAST_VLOG_KEY, String(created.id))
+        persistDraft(created.id, groups)
+      } catch (cause) {
+        setError((cause as Error).message)
+      } finally {
+        setBusy(false)
+      }
+      // 必须等 finally 执行完再交给 mergeFinal 接管 busy，
+      // 否则这里的 setBusy(false) 会覆盖合成中的忙碌状态，导致按钮在合成期间可再次点击。
+      if (created) return mergeFinal(created)
+      return
+    }
     if (!config) {
       setError('AI 图生视频组需要选择 Seedance 2.0 模型配置')
       return
@@ -782,8 +1053,10 @@ export default function VlogPanel({ config, styles }: Props) {
         style,
         description: description.trim(),
         transition_style: transitionStyle,
+        timeline_data: toServerTimeline(groups),
       })
       setProject(created)
+      setCopySource(null)
       localStorage.setItem(LAST_VLOG_KEY, String(created.id))
       persistDraft(created.id, groups)
     } catch (cause) {
@@ -801,6 +1074,7 @@ export default function VlogPanel({ config, styles }: Props) {
     revokeGroupAssets()
     await removePersistedGroupAssets()
     setProject(null)
+    setCopySource(null)
     setGroups([newGroup()])
     setDescription('')
     clearResult()
@@ -819,6 +1093,7 @@ export default function VlogPanel({ config, styles }: Props) {
       revokeGroupAssets()
       await removePersistedGroupAssets()
       setProject(null)
+      setCopySource(null)
       setGroups([newGroup()])
       setDescription('')
       clearResult()
@@ -855,6 +1130,14 @@ export default function VlogPanel({ config, styles }: Props) {
           </div>
         </section>
 
+        {copySource && (
+          <div className="vlog-copy-notice" role="status">
+            {copySource.hasOriginalTimeline
+              ? `正在编辑项目 #${copySource.id} 的副本。重新生成会创建新的 Vlog，原项目保持不变。`
+              : `正在编辑历史成片 #${copySource.id}。原始分镜未保存，当前成片已作为第一段素材载入；你可以更换它或添加新片段后重新合成。`}
+          </div>
+        )}
+
         {error && <div className="alert error" role="alert"><span>{error}</span><button className="icon-btn" type="button" onClick={() => setError('')}>×</button></div>}
 
         <section className="scene-groups" aria-label="Vlog 片段组">
@@ -872,9 +1155,9 @@ export default function VlogPanel({ config, styles }: Props) {
 
               {group.mode === 'ai' && <div className="group-content"><input ref={(element) => { inputRefs.current[`${group.id}-ai`] = element }} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) uploadAiImages(group.id, files, appendAiImagesRef.current === group.id); appendAiImagesRef.current = null; event.target.value = '' }} />{group.images.length === 0 ? <button className="group-dropzone" type="button" disabled={!canEditGroupStructure} onClick={() => openAiImagePicker(group.id, false)}><span>＋</span><strong>选择这一组的 1–9 张图片</strong><small>这些图片只会生成一个 AI 视频片段</small></button> : <div className="group-image-grid">{group.images.map((image, imageIndex) => <figure key={image.image_path} className="group-image"><img src={image.url} alt={`第 ${index + 1} 组图片 ${imageIndex + 1}`} /><figcaption><span>{imageIndex + 1}</span><button className="icon-btn" type="button" title="删除图片" aria-label="删除图片" disabled={!canEditGroupStructure} onClick={() => updateGroup(group.id, (current) => { const images = current.images.filter((_, itemIndex) => itemIndex !== imageIndex); return { ...current, images, duration: aiDurationForCount(images.length) } })}>×</button></figcaption></figure>)}{canEditGroupStructure && group.images.length < 9 && <button className="add-image-tile" type="button" onClick={() => openAiImagePicker(group.id, true)}>＋<span>继续添加图片</span></button>}</div>} {group.images.length >= 1 && <><label className="field group-description-field"><span>本组描述 <em>可选</em></span><textarea rows={2} maxLength={500} disabled={!canEditGroupStructure} value={group.description} onChange={(event) => updateGroup(group.id, (current) => ({ ...current, description: event.target.value }))} placeholder="例如：镜头从山脚出发，逐渐靠近骑行者" /></label><div className="group-meta"><span>{group.images.length} 张图片 · 1 次 AI 调用 · 约 {aiDurationForCount(group.images.length)} 秒</span><button className="link-btn" type="button" disabled={!canEditGroupStructure} onClick={() => openAiImagePicker(group.id, false)}>重新选择</button></div></>}</div>}
 
-              {group.mode === 'motion' && <div className="group-content"><input ref={(element) => { inputRefs.current[`${group.id}-motion`] = element }} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { chooseMotionImage(group.id, event.target.files?.[0]); event.target.value = '' }} />{!group.localImage ? <button className="group-dropzone compact" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => inputRefs.current[`${group.id}-motion`]?.click()}><span>＋</span><strong>选择一张图片</strong><small>只在当前浏览器生成动态效果，不创建 AI 任务</small></button> : <div className="motion-source"><img src={group.localImage.url} alt={`第 ${index + 1} 组动效图片`} /><div><strong>{group.localImage.file.name}</strong><span>本地处理 · 不上传服务器</span><button className="link-btn" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => inputRefs.current[`${group.id}-motion`]?.click()}>更换图片</button></div></div>}<div className="group-settings"><label className="field"><span>动效</span><select value={group.motionTemplate} disabled={!canEditGroupStructure} onChange={(event) => updateGroup(group.id, (current) => ({ ...current, motionTemplate: event.target.value as VlogMotionTemplate }))}>{VLOG_MOTION_TEMPLATES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label><label className="field"><span>时长</span><select value={group.duration} disabled={!canEditGroupStructure} onChange={(event) => updateGroup(group.id, (current) => ({ ...current, duration: Number(event.target.value) }))}><option value="3">3 秒</option><option value="4">4 秒</option><option value="5">5 秒</option><option value="6">6 秒</option></select></label></div></div>}
+              {group.mode === 'motion' && <div className="group-content"><input ref={(element) => { inputRefs.current[`${group.id}-motion`] = element }} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { chooseMotionImage(group.id, event.target.files?.[0]); event.target.value = '' }} />{!group.localImage ? <button className="group-dropzone compact" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => inputRefs.current[`${group.id}-motion`]?.click()}><span>＋</span><strong>选择一张图片</strong><small>只在当前浏览器生成动态效果，不创建 AI 任务</small></button> : <div className="motion-source"><img src={group.localImage.url} alt={`第 ${index + 1} 组动效图片`} /><div><strong>{group.localImage.file?.name ?? '已保存图片'}</strong><span>已上传到服务端，动效在浏览器生成</span><button className="link-btn" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => inputRefs.current[`${group.id}-motion`]?.click()}>更换图片</button></div></div>}<div className="group-settings"><label className="field"><span>动效</span><select value={group.motionTemplate} disabled={!canEditGroupStructure} onChange={(event) => updateGroup(group.id, (current) => ({ ...current, motionTemplate: event.target.value as VlogMotionTemplate }))}>{VLOG_MOTION_TEMPLATES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label><label className="field"><span>时长</span><select value={group.duration} disabled={!canEditGroupStructure} onChange={(event) => updateGroup(group.id, (current) => ({ ...current, duration: Number(event.target.value) }))}><option value="3">3 秒</option><option value="4">4 秒</option><option value="5">5 秒</option><option value="6">6 秒</option></select></label></div></div>}
 
-              {group.mode === 'video' && <div className="group-content"><input ref={(element) => { inputRefs.current[`${group.id}-video`] = element }} type="file" accept="video/*" hidden onChange={(event) => { chooseLocalVideo(group.id, event.target.files?.[0]); event.target.value = '' }} />{!group.video ? <div className="video-source-choices"><button className="group-choice" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => inputRefs.current[`${group.id}-video`]?.click()}><strong>上传本地视频</strong><span>只在当前浏览器读取</span></button><button className="group-choice" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => setOpenHistoryGroup(openHistoryGroup === group.id ? null : group.id)}><strong>选择历史视频</strong><span>复用已经生成的成片</span></button></div> : <div className="video-source-selected"><span className="video-source-icon">▶</span><div><strong>{group.video.name}</strong><span>{group.video.kind === 'history' ? '历史生成视频' : '本地视频'} · {group.video.duration.toFixed(1)} 秒</span></div><button className="link-btn" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => clearVideoAsset(group.id)}>更换</button></div>}{openHistoryGroup === group.id && <div className="history-picker">{history.length === 0 ? <span className="muted small">暂无可复用的历史视频</span> : history.map((item) => <button key={item.id} type="button" className="history-picker-item" onClick={() => selectHistoryVideo(group.id, item)}><span className="history-picker-thumb">{item.image_url ? <img src={item.image_url} alt="" /> : '▶'}</span><span><strong>{item.input_text || `视频 ${item.id}`}</strong><small>{item.duration}s · {item.image_source === 'merged' ? '剪辑成片' : 'AI 生成'}</small></span></button>)}</div>}</div>}
+              {group.mode === 'video' && <div className="group-content"><input ref={(element) => { inputRefs.current[`${group.id}-video`] = element }} type="file" accept="video/*" hidden onChange={(event) => { chooseLocalVideo(group.id, event.target.files?.[0]); event.target.value = '' }} />{!group.video ? <div className="video-source-choices"><button className="group-choice" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => inputRefs.current[`${group.id}-video`]?.click()}><strong>上传本地视频</strong><span>上传到服务端，后续可继续编辑</span></button><button className="group-choice" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => setOpenHistoryGroup(openHistoryGroup === group.id ? null : group.id)}><strong>选择历史视频</strong><span>复用已经生成的成片</span></button></div> : <div className="video-source-selected"><span className="video-source-icon">▶</span><div><strong>{group.video.name}</strong><span>{group.video.kind === 'history' ? '历史生成视频' : '本地视频'} · {group.video.duration.toFixed(1)} 秒</span></div><button className="link-btn" type="button" disabled={!canChooseGroupAsset(group)} onClick={() => clearVideoAsset(group.id)}>更换</button></div>}{openHistoryGroup === group.id && <div className="history-picker">{history.length === 0 ? <span className="muted small">暂无可复用的历史视频</span> : history.map((item) => <button key={item.id} type="button" className="history-picker-item" onClick={() => selectHistoryVideo(group.id, item)}><span className="history-picker-thumb">{item.image_url ? <img src={item.image_url} alt="" /> : '▶'}</span><span><strong>{item.input_text || `视频 ${item.id}`}</strong><small>{item.duration}s · {item.image_source === 'merged' ? '剪辑成片' : 'AI 生成'}</small></span></button>)}</div>}</div>}
             </article>
           ))}
         </section>
@@ -882,7 +1165,7 @@ export default function VlogPanel({ config, styles }: Props) {
         <section className="vlog-section unified-options"><div className="vlog-section-head"><div><h2>成片设置</h2><p>这些设置应用到整条时间线；一句话补充会传给每个 AI 片段。</p></div></div><div className="unified-options-grid"><label className="field"><span>画幅</span><select value={ratio} disabled={!!project || resultSaving} onChange={(event) => setRatio(event.target.value as '9:16' | '16:9')}><option value="9:16">竖屏 9:16</option><option value="16:9">横屏 16:9</option></select></label><label className="field"><span>AI 风格</span><select value={style} disabled={!!project || resultSaving} onChange={(event) => setStyle(event.target.value)}>{styles.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label><label className="field field-wide"><span>一句话补充 <em>可选</em></span><textarea rows={2} maxLength={500} disabled={!!project || resultSaving} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="例如：记录这次高原骑行，从清晨到傍晚" /></label></div><div className="field transition-field"><span>统一转场模板</span><div className="transition-grid">{VLOG_TRANSITIONS.map((item) => <button key={item.key} className={`transition-option ${transitionStyle === item.key ? 'selected' : ''}`} type="button" disabled={!!project || busy || resultSaving} onClick={() => { clearResult(); setTransitionStyle(item.key) }}><strong>{item.label}</strong><span>{item.description}</span></button>)}</div></div></section>
 
         {renderProgress}
-        {project && <section className="vlog-section project-status"><div className="vlog-section-head"><div><h2>AI 片段进度</h2><p>项目 #{project.id} · {STATUS_TEXT[project.status] ?? project.status}</p></div><div className="scene-group-actions">{activeProject && <button className="btn" type="button" disabled={busy || resultSaving} onClick={abandonProject}>放弃项目</button>}{['completed', 'failed', 'cancelled'].includes(project.status) && <button className="btn" type="button" disabled={resultSaving} onClick={reset}>新建 Vlog</button>}</div></div>{needsLocalReselect && <div className="alert error">刷新后本地素材不会保留，请重新选择缺失的图片或视频后再合成。</div>}{project.clips.map((clip) => <div className={`clip-progress status-${clip.status}`} key={clip.id}><span className="clip-index">{clip.sequence}</span><div><strong>AI 片段 {clip.sequence} · {clip.duration}s</strong><span>{STATUS_TEXT[clip.status] ?? clip.status}</span>{clip.error && <small>{clip.error}</small>}</div>{clip.status === 'generating_video' && <span className="spinner" />}{clip.status === 'failed' && clip.retry_count < 1 && <button className="btn" type="button" disabled={resultSaving} onClick={() => retryClip(clip.id)}>重试</button>}</div>)}{project.status === 'ready_to_merge' && <button className="btn primary big full" type="button" disabled={!canMergeReadyProject} onClick={() => mergeFinal(project)}>{busy ? '正在合成…' : needsLocalReselect ? '请补齐本地素材' : '生成最终 Vlog'}</button>}{project.status === 'completed' && project.final_video_url && <div className="vlog-result"><video controls playsInline src={project.final_video_url} /><a className="btn primary" href={project.final_video_url} download={`vlog-${project.id}.mp4`}>下载 Vlog</a></div>}</section>}
+        {project && <section className="vlog-section project-status"><div className="vlog-section-head"><div><h2>AI 片段进度</h2><p>项目 #{project.id} · {STATUS_TEXT[project.status] ?? project.status}</p></div><div className="scene-group-actions">{activeProject && <button className="btn" type="button" disabled={busy || resultSaving} onClick={abandonProject}>放弃项目</button>}{project.status === 'completed' && <button className="btn" type="button" disabled={busy || resultSaving} onClick={() => startProjectCopy(project)}>编辑副本</button>}{['completed', 'failed', 'cancelled'].includes(project.status) && <button className="btn" type="button" disabled={resultSaving} onClick={reset}>新建 Vlog</button>}</div></div>{needsLocalReselect && <div className="alert error">刷新后本地素材不会保留，请重新选择缺失的图片或视频后再合成。</div>}{project.clips.map((clip) => <div className={`clip-progress status-${clip.status}`} key={clip.id}><span className="clip-index">{clip.sequence}</span><div><strong>AI 片段 {clip.sequence} · {clip.duration}s</strong><span>{STATUS_TEXT[clip.status] ?? clip.status}</span>{clip.error && <small>{clip.error}</small>}</div>{clip.status === 'generating_video' && <span className="spinner" />}{clip.status === 'failed' && clip.retry_count < 1 && <button className="btn" type="button" disabled={resultSaving} onClick={() => retryClip(clip.id)}>重试</button>}</div>)}{project.status === 'ready_to_merge' && <button className="btn primary big full" type="button" disabled={!canMergeReadyProject} onClick={() => mergeFinal(project)}>{busy ? '正在合成…' : needsLocalReselect ? '请补齐本地素材' : '生成最终 Vlog'}</button>}{project.status === 'completed' && project.final_video_url && <div className="vlog-result"><video controls playsInline src={project.final_video_url} /><a className="btn primary" href={project.final_video_url} download={`vlog-${project.id}.mp4`}>下载 Vlog</a></div>}</section>}
         {result && <section className="vlog-section local-result-section"><div className="vlog-section-head"><div><h2>成片已生成</h2><p>约 {result.duration.toFixed(1)} 秒 · <span className={`result-save-status ${result.saving ? 'is-saving' : result.saved ? 'is-saved' : 'is-failed'}`} aria-live="polite">{result.saving ? `正在保存到${result.saveTarget}…` : result.saved ? `已保存到${result.saveTarget}` : `未保存到${result.saveTarget}`}</span></p></div><button className="btn" type="button" disabled={resultSaving} onClick={clearResult}>关闭预览</button></div><div className="vlog-result"><video controls playsInline src={result.url} /><a className="btn primary" href={result.url} download="vlog-edit.mp4">下载 Vlog</a></div></section>}
       </div>
 

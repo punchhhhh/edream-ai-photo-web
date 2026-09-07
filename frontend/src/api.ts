@@ -133,7 +133,22 @@ export const createVlog = (payload: {
   style: string
   description: string
   transition_style: string
+  timeline_data?: Array<Record<string, unknown>>
 }) => request<VlogProject>('/api/vlogs', { method: 'POST', body: JSON.stringify(payload) })
+
+export const createLocalVlog = (payload: {
+  ratio: '9:16' | '16:9'
+  style: string
+  description: string
+  transition_style: string
+  timeline_data: Array<Record<string, unknown>>
+}) => request<VlogProject>('/api/vlogs/local', { method: 'POST', body: JSON.stringify(payload) })
+
+export const uploadVlogVideo = (file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return request<{ asset_path: string; url: string }>('/api/vlogs/assets/video', { method: 'POST', body: form })
+}
 
 export const planVlog = (imagePaths: string[]) =>
   request<Omit<VlogUploadPlan, 'images'>>('/api/vlogs/plan', {

@@ -8,9 +8,10 @@ interface Props {
   onChanged?: () => void
   onDeleted?: (id: number) => void
   onReuse?: (c: Creation) => void
+  onEditVlog?: (creation: Creation) => void
 }
 
-export default function HistoryPanel({ onClose, onChanged, onDeleted, onReuse }: Props) {
+export default function HistoryPanel({ onClose, onChanged, onDeleted, onReuse, onEditVlog }: Props) {
   const [creations, setCreations] = useState<Creation[]>([])
   const [error, setError] = useState('')
   const [playing, setPlaying] = useState<Creation | null>(null)
@@ -85,7 +86,11 @@ export default function HistoryPanel({ onClose, onChanged, onDeleted, onReuse }:
                         </a>
                       </>
                     )}
-                    {onReuse && (
+                    {c.image_source === 'merged' && onEditVlog ? (
+                      <button className="link-btn" onClick={() => onEditVlog(c)}>
+                        编辑 Vlog
+                      </button>
+                    ) : onReuse && (
                       <button className="link-btn" onClick={() => onReuse(c)}>
                         再创作
                       </button>
