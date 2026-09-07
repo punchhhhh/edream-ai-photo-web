@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import media, storage
 from ..database import get_db
-from ..models import Creation, ModelConfig, StylePreset, User
+from ..models import Creation, ModelConfig, StylePreset, User, VlogProject
 from ..schemas import CreationIn, CreationOut, ExpandIn, ExpandOut, ImageGenIn, MediaOut
 from ..settings import settings
 from ..services.ai_client import AICallError, AIClient
@@ -31,7 +31,7 @@ def _get_creation(db: Session, user: User, creation_id: int) -> Creation:
     return creation
 
 
-def _to_out(creation: Creation) -> CreationOut:
+def _to_out(creation: Creation, vlog_project_id: int | None = None) -> CreationOut:
     data = {
         c.name: getattr(creation, c.name)
         for c in Creation.__table__.columns
@@ -41,7 +41,22 @@ def _to_out(creation: Creation) -> CreationOut:
     # 本地/对象存储的播放地址输出时推导;列里的 video_url 只作为"远端回退地址"(下载失败时保留网关链接)
     data["video_url"] = storage.url(creation.video_path) or creation.video_url
     data.pop("video_path", None)
+    data["vlog_project_id"] = vlog_project_id
     return CreationOut(**data)
+
+
+def _vlog_project_ids_for_creations(
+    db: Session, user: User, creation_ids: list[int]
+) -> dict[int, int]:
+    if not creation_ids:
+        return {}
+    rows = db.execute(
+        select(VlogProject.final_creation_id, VlogProject.id).where(
+            VlogProject.user_id == user.id,
+            VlogProject.final_creation_id.in_(creation_ids),
+        )
+    ).all()
+    return {creation_id: project_id for creation_id, project_id in rows if creation_id is not None}
 
 
 def _active_creation(db: Session, user: User) -> Creation | None:
@@ -238,7 +253,8 @@ def list_creations(
         .order_by(Creation.id.desc())
         .limit(min(limit, 200))
     ).all()
-    return [_to_out(c) for c in creations]
+    project_ids = _vlog_project_ids_for_creations(db, user, [creation.id for creation in creations])
+    return [_to_out(c, project_ids.get(c.id)) for c in creations]
 
 
 @router.get("/creations/{creation_id}", response_model=CreationOut)
@@ -247,7 +263,9 @@ def get_creation(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return _to_out(_get_creation(db, user, creation_id))
+    creation = _get_creation(db, user, creation_id)
+    project_ids = _vlog_project_ids_for_creations(db, user, [creation.id])
+    return _to_out(creation, project_ids.get(creation.id))
 
 
 @router.delete("/creations/{creation_id}")

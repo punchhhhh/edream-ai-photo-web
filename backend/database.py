@@ -44,6 +44,11 @@ def _ensure_vlog_transition_schema() -> None:
         statements.append(
             "ALTER TABLE vlog_projects ADD COLUMN transition_style VARCHAR(30) NOT NULL DEFAULT 'fade'"
         )
+    if "timeline_data" not in columns:
+        default = "'[]'::json" if engine.dialect.name == "postgresql" else "'[]'"
+        statements.append(
+            f"ALTER TABLE vlog_projects ADD COLUMN timeline_data JSON NOT NULL DEFAULT {default}"
+        )
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))

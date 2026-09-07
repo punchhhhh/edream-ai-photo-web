@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -155,6 +155,21 @@ class VlogCreateIn(BaseModel):
     style: str = Field(default="写实纪录", max_length=50)
     description: str = Field(default="", max_length=500)
     transition_style: str = Field(default="fade", max_length=30)
+    # 可编辑时间线；未传时由后端根据 AI 图片组补齐，兼容旧客户端。
+    timeline_data: list[dict[str, Any]] | None = Field(default=None, max_length=36)
+
+
+class LocalVlogCreateIn(BaseModel):
+    ratio: Literal["9:16", "16:9"]
+    style: str = Field(default="写实纪录", max_length=50)
+    description: str = Field(default="", max_length=500)
+    transition_style: str = Field(default="fade", max_length=30)
+    timeline_data: list[dict[str, Any]] = Field(min_length=1, max_length=36)
+
+
+class VlogVideoAssetOut(BaseModel):
+    asset_path: str
+    url: str
 
 
 class VlogClipOut(BaseModel):
@@ -175,6 +190,7 @@ class VlogProjectOut(BaseModel):
     style: str
     image_paths: list[str]
     image_urls: list[str]
+    timeline_data: list[dict[str, Any]]
     ratio: str
     resolution: str
     target_duration: int
@@ -218,6 +234,8 @@ class CreationOut(BaseModel):
     chat_model: str
     image_model: str
     video_model: str
+    # 成片若来自 Vlog 项目，历史列表可用这个关联直接打开可编辑副本。
+    vlog_project_id: int | None = None
     created_at: datetime
     updated_at: datetime
 

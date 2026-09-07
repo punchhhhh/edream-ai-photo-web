@@ -186,6 +186,8 @@ class VlogProject(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     style: Mapped[str] = mapped_column(String(50), default="写实纪录")
     image_paths: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # 完整时间线：AI 组、图片动效和本地/历史视频的可编辑来源。
+    timeline_data: Mapped[list[dict]] = mapped_column(JSON, default=list)
     ratio: Mapped[str] = mapped_column(String(10), default="9:16")
     resolution: Mapped[str] = mapped_column(String(20), default="720p")
     target_duration: Mapped[int] = mapped_column(Integer, default=30)

@@ -15,11 +15,13 @@ from ..schemas import (
     VlogCreateIn,
     VlogClipOut,
     VlogImageOut,
+    LocalVlogCreateIn,
     VlogPlanIn,
     VlogPlanClipOut,
     VlogPlanOut,
     VlogProjectOut,
     VlogUploadOut,
+    VlogVideoAssetOut,
 )
 from ..services.vlog_pipeline import (
     ACTIVE_VLOG_STATUSES,
@@ -51,6 +53,7 @@ def _project_out(db: Session, project: VlogProject) -> VlogProjectOut:
         style=project.style,
         image_paths=project.image_paths,
         image_urls=[storage.url(path) or "" for path in project.image_paths],
+        timeline_data=_timeline_out(db, project.user_id, project.timeline_data),
         ratio=project.ratio,
         resolution=project.resolution,
         target_duration=project.target_duration,
@@ -78,6 +81,33 @@ def _project_out(db: Session, project: VlogProject) -> VlogProjectOut:
         created_at=project.created_at,
         updated_at=project.updated_at,
     )
+
+
+def _timeline_out(db: Session, user_id: int, timeline: list[dict]) -> list[dict]:
+    """给持久化的素材路径补播放地址，浏览器不需要猜存储后端。"""
+    history_ids = [item.get("creation_id") for item in timeline if item.get("source") == "history"]
+    history = {
+        row.id: row
+        for row in db.scalars(
+            select(Creation).where(
+                Creation.user_id == user_id,
+                Creation.id.in_([value for value in history_ids if isinstance(value, int)]),
+            )
+        )
+    }
+    result: list[dict] = []
+    for item in timeline:
+        output = dict(item)
+        if isinstance(output.get("image_path"), str):
+            output["image_url"] = storage.url(output["image_path"])
+        if isinstance(output.get("asset_path"), str):
+            output["video_url"] = storage.url(output["asset_path"])
+        if output.get("source") == "history" and isinstance(output.get("creation_id"), int):
+            creation = history.get(output["creation_id"])
+            output["video_url"] = (storage.url(creation.video_path) or creation.video_url) if creation else None
+            output["name"] = creation.input_text if creation else output.get("name", "历史视频")
+        result.append(output)
+    return result
 
 
 def _normalize_image(data: bytes) -> tuple[bytes, int, int]:
@@ -184,6 +214,95 @@ def _validate_image_paths(user: User, paths: list[str]) -> None:
             raise HTTPException(422, "图片文件不存在，请重新上传")
 
 
+def _validate_video_path(user: User, path: str) -> None:
+    if not media.is_safe_rel(path) or not path.startswith(f"users/{user.id}/videos/"):
+        raise HTTPException(422, "视频不属于当前用户或路径不合法")
+    if not storage.exists(path):
+        raise HTTPException(422, "视频文件不存在，请重新上传")
+
+
+def _normalize_timeline(db: Session, user: User, timeline: list[dict], *, allow_ai: bool = True) -> list[dict]:
+    """只存可恢复的来源信息，不接受浏览器传入的 URL 或任意附加字段。"""
+    result: list[dict] = []
+    for position, item in enumerate(timeline, start=1):
+        mode = item.get("mode") if isinstance(item, dict) else None
+        group_id = item.get("id") if isinstance(item, dict) else None
+        if mode not in ("ai", "motion", "video") or not isinstance(group_id, str) or not group_id:
+            raise HTTPException(422, f"第 {position} 个时间线片段格式不合法")
+        if mode == "ai":
+            if not allow_ai:
+                # 纯本地 Vlog 没有 AI 片段的生成管线，混入会产生无法合成的空片段。
+                raise HTTPException(422, f"第 {position} 个片段是 AI 片段，纯本地 Vlog 不支持")
+            result.append({
+                "id": group_id,
+                "mode": "ai",
+                "description": str(item.get("description", ""))[:500],
+            })
+            continue
+        if mode == "motion":
+            image_path = item.get("image_path")
+            if not isinstance(image_path, str):
+                raise HTTPException(422, f"第 {position} 个图片动效缺少图片")
+            _validate_image_paths(user, [image_path])
+            duration = item.get("duration", 4)
+            if not isinstance(duration, int) or not 3 <= duration <= 6:
+                raise HTTPException(422, f"第 {position} 个图片动效时长不合法")
+            template = item.get("motion_template", "kenburns_in")
+            if template not in ("kenburns_in", "kenburns_out", "pan_left", "pan_right", "drift"):
+                raise HTTPException(422, f"第 {position} 个图片动效模板不合法")
+            result.append({"id": group_id, "mode": "motion", "image_path": image_path, "duration": duration, "motion_template": template})
+            continue
+
+        source = item.get("source")
+        duration = item.get("duration", 5)
+        if not isinstance(duration, (int, float)) or not 1 <= duration <= 3600:
+            raise HTTPException(422, f"第 {position} 个视频时长不合法")
+        if source == "history":
+            creation_id = item.get("creation_id")
+            creation = db.get(Creation, creation_id) if isinstance(creation_id, int) else None
+            if creation is None or creation.user_id != user.id or not (creation.video_path or creation.video_url):
+                raise HTTPException(422, f"第 {position} 个历史视频不可用")
+            result.append({"id": group_id, "mode": "video", "source": "history", "creation_id": creation.id, "duration": duration})
+            continue
+        if source == "upload":
+            asset_path = item.get("asset_path")
+            if not isinstance(asset_path, str):
+                raise HTTPException(422, f"第 {position} 个本地视频缺少已上传素材")
+            _validate_video_path(user, asset_path)
+            result.append({
+                "id": group_id,
+                "mode": "video",
+                "source": "upload",
+                "asset_path": asset_path,
+                "duration": duration,
+                "name": str(item.get("name", "本地视频"))[:200],
+                "mime": str(item.get("mime", "video/mp4"))[:100],
+            })
+            continue
+        raise HTTPException(422, f"第 {position} 个视频来源不合法")
+    return result
+
+
+@router.post("/vlogs/assets/video", response_model=VlogVideoAssetOut)
+def upload_vlog_video_asset(
+    file: UploadFile = File(...), user: User = Depends(get_current_user)
+):
+    if not (file.content_type or "").lower().startswith("video/"):
+        raise HTTPException(422, "仅支持视频文件")
+    head = file.file.read(1024 * 1024)
+    file.file.seek(0)
+    if not head or not media.sniff_video(head):
+        raise HTTPException(422, "文件内容不是有效的视频(mp4/webm)")
+    ext = ".webm" if head.startswith(b"\x1a\x45\xdf\xa3") else ".mp4"
+    try:
+        path = storage.save_seekable(
+            "videos", file.file, ext, user_id=user.id, max_bytes=settings.max_video_upload_mb * 1024 * 1024
+        )
+    except media.MediaTooLarge:
+        raise HTTPException(422, f"视频不能超过 {settings.max_video_upload_mb}MB") from None
+    return VlogVideoAssetOut(asset_path=path, url=storage.url(path) or "")
+
+
 def _plan(paths: list[str]) -> VlogPlanOut:
     groups = plan_reference_groups(paths)
     durations = [5 if len(group) == 1 else 10 for group in groups]
@@ -195,6 +314,48 @@ def _plan(paths: list[str]) -> VlogPlanOut:
             for group, duration in zip(groups, durations)
         ],
     )
+
+
+@router.post("/vlogs/local", response_model=VlogProjectOut)
+def create_local_vlog(
+    payload: LocalVlogCreateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    active = db.scalars(
+        select(VlogProject)
+        .where(VlogProject.user_id == user.id, VlogProject.status.in_(ACTIVE_VLOG_STATUSES))
+        .order_by(VlogProject.id.desc())
+    ).first()
+    if active is not None:
+        raise HTTPException(409, f"已有 Vlog 正在处理（项目 {active.id}）")
+    try:
+        transition_style = normalize_vlog_transition(payload.transition_style)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    timeline = _normalize_timeline(db, user, payload.timeline_data, allow_ai=False)
+    image_paths = [item["image_path"] for item in timeline if item["mode"] == "motion"]
+    target_duration = round(sum(float(item.get("duration", 5)) for item in timeline))
+    project = VlogProject(
+        user_id=user.id,
+        description=payload.description.strip(),
+        style=payload.style.strip() or "写实纪录",
+        image_paths=image_paths,
+        timeline_data=timeline,
+        ratio=payload.ratio,
+        resolution="720p",
+        target_duration=max(1, target_duration),
+        transition_style=transition_style,
+        status="ready_to_merge",
+    )
+    db.add(project)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "已有 Vlog 正在处理，请勿重复提交") from None
+    db.refresh(project)
+    return _project_out(db, project)
 
 
 @router.post("/vlogs/plan", response_model=VlogPlanOut)
@@ -249,11 +410,23 @@ def create_vlog(
         raise HTTPException(422, "没有图片分组时不能传入组描述")
     group_descriptions = payload.image_group_descriptions or [""] * len(groups)
     target_duration = sum(5 if len(group) == 1 else 10 for group in groups)
+    timeline = _normalize_timeline(
+        db,
+        user,
+        payload.timeline_data
+        or [
+            {"id": f"ai-{sequence}", "mode": "ai", "description": group_descriptions[sequence - 1]}
+            for sequence in range(1, len(groups) + 1)
+        ],
+    )
+    if sum(item["mode"] == "ai" for item in timeline) != len(groups):
+        raise HTTPException(422, "时间线中的 AI 片段数量必须与图片分组一致")
     project = VlogProject(
         user_id=user.id,
         description=payload.description.strip(),
         style=style,
         image_paths=payload.image_paths,
+        timeline_data=timeline,
         ratio=ratio,
         resolution="720p",
         target_duration=target_duration,
@@ -375,7 +548,7 @@ def complete_vlog(
     if project.status != "ready_to_merge":
         raise HTTPException(409, "片段尚未全部生成完成")
     clips = db.scalars(select(VlogClip).where(VlogClip.project_id == project.id)).all()
-    if not clips or any(clip.status != "completed" for clip in clips):
+    if any(clip.status != "completed" for clip in clips):
         raise HTTPException(409, "片段尚未全部生成完成")
     if not (file.content_type or "").lower().startswith("video/"):
         raise HTTPException(422, "仅支持视频文件")
