@@ -128,6 +128,7 @@ export const createVlog = (payload: {
   config_id: number
   image_paths: string[]
   image_groups?: string[][]
+  image_group_descriptions?: string[]
   ratio?: '9:16' | '16:9'
   style: string
   description: string

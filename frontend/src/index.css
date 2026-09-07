@@ -964,6 +964,22 @@ body {
   font-size: 12px;
 }
 
+.result-save-status {
+  color: var(--muted);
+}
+
+.result-save-status.is-saving {
+  color: var(--primary-2);
+}
+
+.result-save-status.is-saved {
+  color: var(--success, #55c98a);
+}
+
+.result-save-status.is-failed {
+  color: var(--danger);
+}
+
 .vlog-dropzone {
   width: 100%;
   min-height: 150px;
