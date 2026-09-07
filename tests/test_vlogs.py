@@ -119,6 +119,51 @@ def test_nine_images_plan_three_scenes_and_variable_duration(client: TestClient)
     assert client.get("/api/vlogs/latest", headers=_headers()).json()["id"] == project["id"]
 
 
+def test_create_vlog_accepts_nine_images_per_group_and_uses_group_description(client: TestClient) -> None:
+    from backend.database import SessionLocal
+    from backend.models import VlogClip
+
+    upload = _upload(client, count=9)
+    config = _config(client)
+    response = client.post(
+        "/api/vlogs",
+        json={
+            "config_id": config["id"],
+            "image_paths": [image["image_path"] for image in upload["images"]],
+            "image_groups": [[image["image_path"] for image in upload["images"]]],
+            "image_group_descriptions": ["镜头沿山路跟拍骑行者进入山谷"],
+            "style": "写实纪录",
+        },
+        headers=_headers(),
+    )
+    assert response.status_code == 200, response.text
+    project = response.json()
+    assert len(project["clips"]) == 1
+
+    with SessionLocal() as db:
+        clip = db.get(VlogClip, project["clips"][0]["id"])
+        assert clip is not None
+        assert "镜头沿山路跟拍骑行者进入山谷" in clip.prompt
+
+
+def test_create_vlog_rejects_overlong_group_description(client: TestClient) -> None:
+    upload = _upload(client, count=1)
+    config = _config(client)
+    path = upload["images"][0]["image_path"]
+    response = client.post(
+        "/api/vlogs",
+        json={
+            "config_id": config["id"],
+            "image_paths": [path],
+            "image_groups": [[path]],
+            "image_group_descriptions": ["x" * 501],
+            "style": "写实纪录",
+        },
+        headers=_headers(),
+    )
+    assert response.status_code == 422
+
+
 def test_plan_and_create_reject_another_users_images(client: TestClient) -> None:
     upload = _upload(client, count=2, sub="owner")
     paths = [image["image_path"] for image in upload["images"]]
