@@ -311,6 +311,182 @@ def test_complete_vlog_creates_history_record(client: TestClient) -> None:
     assert history[0]["id"] == body["final_creation_id"]
     assert history[0]["image_source"] == "merged"
     assert history[0]["duration"] == 19
+    assert history[0]["vlog_project_id"] == project["id"]
+
+
+def _upload_video_asset(client: TestClient, sub: str = "vlog-user") -> dict:
+    response = client.post(
+        "/api/vlogs/assets/video",
+        files={"file": ("clip.mp4", MP4_BYTES, "video/mp4")},
+        headers=_headers(sub),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _create_local_vlog(client: TestClient, timeline: list[dict], sub: str = "vlog-user") -> dict:
+    response = client.post(
+        "/api/vlogs/local",
+        json={
+            "ratio": "9:16",
+            "style": "写实纪录",
+            "description": "本地合成",
+            "transition_style": "fade",
+            "timeline_data": timeline,
+        },
+        headers=_headers(sub),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _complete_vlog(client: TestClient, project_id: int, sub: str = "vlog-user") -> dict:
+    response = client.post(
+        f"/api/vlogs/{project_id}/complete",
+        files={"file": ("final.mp4", MP4_BYTES, "video/mp4")},
+        data={"actual_duration": "9"},
+        headers=_headers(sub),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_upload_vlog_video_asset_rejects_non_video_content(client: TestClient) -> None:
+    response = client.post(
+        "/api/vlogs/assets/video",
+        files={"file": ("fake.mp4", b"this is definitely not a video", "video/mp4")},
+        headers=_headers(),
+    )
+    assert response.status_code == 422
+
+
+def test_create_local_vlog_roundtrips_timeline_and_completes(client: TestClient) -> None:
+    upload = _upload(client, count=1)
+    image_path = upload["images"][0]["image_path"]
+    asset = _upload_video_asset(client)
+
+    project = _create_local_vlog(client, [
+        {"id": "g-1", "mode": "motion", "image_path": image_path, "duration": 4, "motion_template": "drift"},
+        {"id": "g-2", "mode": "video", "source": "upload", "asset_path": asset["asset_path"], "duration": 8, "name": "骑行.mp4", "mime": "video/mp4"},
+    ])
+
+    assert project["status"] == "ready_to_merge"
+    assert project["clips"] == []
+    assert project["target_duration"] == 12
+    assert project["image_paths"] == [image_path]
+    timeline = project["timeline_data"]
+    assert timeline[0]["image_url"].startswith("/api/media/")
+    assert timeline[1]["video_url"].startswith("/api/media/")
+
+    completed = _complete_vlog(client, project["id"])
+    assert completed["status"] == "completed"
+    history = client.get("/api/creations", headers=_headers()).json()
+    assert history[0]["id"] == completed["final_creation_id"]
+    assert history[0]["vlog_project_id"] == project["id"]
+
+
+def test_local_vlog_accepts_history_video_and_derives_playback_url(client: TestClient) -> None:
+    asset = _upload_video_asset(client)
+    first = _create_local_vlog(client, [
+        {"id": "v-1", "mode": "video", "source": "upload", "asset_path": asset["asset_path"], "duration": 6, "name": "clip.mp4", "mime": "video/mp4"},
+    ])
+    creation_id = _complete_vlog(client, first["id"])["final_creation_id"]
+
+    second = _create_local_vlog(client, [
+        {"id": "h-1", "mode": "video", "source": "history", "creation_id": creation_id, "duration": 5},
+    ])
+
+    timeline = second["timeline_data"]
+    assert timeline[0]["video_url"].startswith("/api/media/")
+    assert timeline[0]["name"]  # 由历史记录回填显示名
+
+
+def test_local_vlog_rejects_ai_item_and_invalid_sources(client: TestClient) -> None:
+    ai_item = client.post(
+        "/api/vlogs/local",
+        json={
+            "ratio": "9:16",
+            "style": "写实纪录",
+            "description": "",
+            "transition_style": "fade",
+            "timeline_data": [{"id": "a-1", "mode": "ai", "description": "偷偷混入 AI 片段"}],
+        },
+        headers=_headers(),
+    )
+    assert ai_item.status_code == 422
+
+    upload = _upload(client, count=1, sub="owner")
+    foreign_asset = _upload_video_asset(client, sub="owner")
+    responses = [
+        # 引用他人上传的本地视频
+        client.post(
+            "/api/vlogs/local",
+            json={
+                "ratio": "9:16",
+                "style": "写实纪录",
+                "description": "",
+                "transition_style": "fade",
+                "timeline_data": [{"id": "v-1", "mode": "video", "source": "upload", "asset_path": foreign_asset["asset_path"], "duration": 5}],
+            },
+            headers=_headers("intruder"),
+        ),
+        # 引用他人的动效图片
+        client.post(
+            "/api/vlogs/local",
+            json={
+                "ratio": "9:16",
+                "style": "写实纪录",
+                "description": "",
+                "transition_style": "fade",
+                "timeline_data": [{"id": "m-1", "mode": "motion", "image_path": upload["images"][0]["image_path"], "duration": 4}],
+            },
+            headers=_headers("intruder"),
+        ),
+        # 未知来源与非法时长
+        client.post(
+            "/api/vlogs/local",
+            json={
+                "ratio": "9:16",
+                "style": "写实纪录",
+                "description": "",
+                "transition_style": "fade",
+                "timeline_data": [{"id": "v-2", "mode": "video", "source": "youtube", "duration": 5}],
+            },
+            headers=_headers(),
+        ),
+        client.post(
+            "/api/vlogs/local",
+            json={
+                "ratio": "9:16",
+                "style": "写实纪录",
+                "description": "",
+                "transition_style": "fade",
+                "timeline_data": [{"id": "v-3", "mode": "video", "source": "upload", "asset_path": "x", "duration": 0}],
+            },
+            headers=_headers(),
+        ),
+    ]
+    assert [response.status_code for response in responses] == [422, 422, 422, 422]
+
+
+def test_local_vlog_blocked_while_another_vlog_is_active(client: TestClient) -> None:
+    upload = _upload(client, count=2)
+    config = _config(client)
+    _create_project(client, upload, config["id"])  # pending 项目占用唯一名额
+    asset = _upload_video_asset(client)
+
+    response = client.post(
+        "/api/vlogs/local",
+        json={
+            "ratio": "9:16",
+            "style": "写实纪录",
+            "description": "",
+            "transition_style": "fade",
+            "timeline_data": [{"id": "v-1", "mode": "video", "source": "upload", "asset_path": asset["asset_path"], "duration": 5}],
+        },
+        headers=_headers(),
+    )
+    assert response.status_code == 409
 
 
 def test_create_vlog_rejects_unknown_transition(client: TestClient) -> None:
