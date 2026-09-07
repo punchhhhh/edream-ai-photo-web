@@ -595,6 +595,7 @@ export default function VlogPanel({ config, styles }: Props) {
 
   const selectHistoryVideo = (id: string, creation: Creation) => {
     if (!creation.video_url) return
+    const videoUrl = creation.video_url
     const old = groups.find((group) => group.id === id)
     if (old?.video?.kind === 'local') {
       URL.revokeObjectURL(old.video.url)
@@ -607,10 +608,10 @@ export default function VlogPanel({ config, styles }: Props) {
       video: {
         id: `history-${creation.id}`,
         name: creation.input_text || `历史视频 ${creation.id}`,
-        url: creation.video_url,
+        url: videoUrl,
         duration: creation.duration,
         kind: 'history',
-        forceEncode: !isMp4Url(creation.video_url),
+        forceEncode: !isMp4Url(videoUrl),
         creation,
       },
     }))
