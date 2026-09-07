@@ -251,6 +251,7 @@ interface VlogSource {
   url: string
   duration: number
   mime?: string
+  forceEncode?: boolean
 }
 
 function probeMedia(log: string[], fallbackDuration: number): { duration: number; hasAudio: boolean } {
@@ -270,7 +271,7 @@ export async function mergeVlogClips(
   onProgress: (p: MergeProgress) => void,
 ): Promise<MergeResult> {
   if (sources.length === 0) throw new Error('没有可合成的视频片段')
-  if (sources.length === 1) {
+  if (sources.length === 1 && !sources[0].forceEncode) {
     onProgress({ stage: 'downloading', detail: '读取唯一片段' })
     const response = await fetch(sources[0].url)
     if (!response.ok) throw new Error(`片段下载失败(${response.status})`)

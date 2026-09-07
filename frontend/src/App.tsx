@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ConfigPanel from './components/ConfigPanel'
-import EditPanel from './components/EditPanel'
 import HistoryPanel from './components/HistoryPanel'
 import VlogPanel from './components/VlogPanel'
 import {
@@ -36,7 +35,6 @@ export default function App() {
   const [configId, setConfigId] = useState<number | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [editOpen, setEditOpen] = useState(false)
 
   // 步骤状态
   const [text, setText] = useState('')
@@ -338,9 +336,6 @@ export default function App() {
           <button className="btn" onClick={() => setConfigOpen(true)}>
             模型配置
           </button>
-          <button className="btn" onClick={() => setEditOpen(true)}>
-            视频剪辑
-          </button>
           <button className="btn" onClick={() => setHistoryOpen(true)}>
             历史记录
           </button>
@@ -578,7 +573,6 @@ export default function App() {
           }}
         />
       )}
-      {editOpen && <EditPanel onClose={() => setEditOpen(false)} />}
       {historyOpen && (
         <HistoryPanel
           onClose={() => setHistoryOpen(false)}

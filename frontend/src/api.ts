@@ -112,7 +112,8 @@ export const saveMergedVideo = (
   form.append('file', file, 'merged.mp4')
   form.append('title', meta.title)
   form.append('source_ids', JSON.stringify(meta.sourceIds))
-  form.append('total_duration', String(meta.totalDuration))
+  // FFmpeg 的实际时长可能带小数，后端历史接口按整数秒入库。
+  form.append('total_duration', String(Math.max(0, Math.round(meta.totalDuration))))
   return request<Creation>('/api/creations/merged', { method: 'POST', body: form })
 }
 
@@ -126,6 +127,8 @@ export const uploadVlogImages = (files: File[]) => {
 export const createVlog = (payload: {
   config_id: number
   image_paths: string[]
+  image_groups?: string[][]
+  ratio?: '9:16' | '16:9'
   style: string
   description: string
   transition_style: string
@@ -139,7 +142,7 @@ export const planVlog = (imagePaths: string[]) =>
 
 export const getVlog = (id: number) => request<VlogProject>(`/api/vlogs/${id}`)
 
-export const getLatestVlog = () => request<VlogProject>('/api/vlogs/latest')
+export const getLatestVlog = () => request<VlogProject | null>('/api/vlogs/latest')
 
 export const retryVlogClip = (projectId: number, clipId: number) =>
   request<VlogProject>(`/api/vlogs/${projectId}/clips/${clipId}/retry`, { method: 'POST' })
