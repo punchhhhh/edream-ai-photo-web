@@ -36,6 +36,7 @@ backend/                 后端
 frontend/                前端(Vite + React + TS)
 media/                   产物目录(images / uploads / videos),经 /api/media 静态服务
 tests/                   pytest(认证/隔离/并发限制/安全加固/重启恢复)
+DEPLOY.md                生产部署手册(studio.ymmjc.com:发布/回滚/COS 迁移/运维)
 main.py                  uvicorn 启动入口
 ```
 
@@ -51,6 +52,8 @@ main.py                  uvicorn 启动入口
 | `creations` | 生成任务记录;`user_id` 外键 + **部分唯一索引**:`(user_id) WHERE status IN ('pending','generating_video')`,数据库层保证每用户同时只有一个生成中任务 |
 
 ## 快速开始
+
+> 生产环境(studio.ymmjc.com)的部署与发布流程见 [DEPLOY.md](DEPLOY.md),本节面向本地开发。
 
 ### 1. 数据库
 
