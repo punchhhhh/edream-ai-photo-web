@@ -112,7 +112,7 @@ def save_seekable(
         raise media.MediaTooLarge(str(size))
     key = build_key(user_id, kind, _new_name(ext))
     if use_cos():
-        cos_client().upload_fileobj(Bucket=settings.cos_bucket, Key=_full_key(key), Body=fileobj)
+        cos_client().put_object(Bucket=settings.cos_bucket, Key=_full_key(key), Body=fileobj)
     else:
         media.write_rel(key, iter(lambda: fileobj.read(_CHUNK), b""), max_bytes=max_bytes)
     return key
@@ -126,6 +126,13 @@ def read(key: str) -> bytes:
     if path is None or not path.is_file():
         raise FileNotFoundError(key)
     return path.read_bytes()
+
+
+def download_to(key: str, fileobj: BinaryIO) -> None:
+    """把对象流式写入文件对象;大视频素材不整读进内存(仅 COS 需要,本地可直接用路径)。"""
+    resp = cos_client().get_object(Bucket=settings.cos_bucket, Key=_full_key(key))
+    for chunk in resp["Body"].get_stream(chunk_size=_CHUNK):
+        fileobj.write(chunk)
 
 
 def exists(key: str) -> bool:

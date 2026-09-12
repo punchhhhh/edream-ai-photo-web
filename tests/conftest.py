@@ -8,6 +8,8 @@ os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{_tmpdir}/test.db"
 os.environ["AUTH_MODE"] = "dev"
 os.environ["DEV_AUTH_SUB"] = "dev-user"
 os.environ["MEDIA_DIR"] = os.path.join(_tmpdir, "media")
+# 测试一律走本地存储,避免读到开发者 .env 里的 STORAGE_BACKEND=cos 而写真实桶
+os.environ["STORAGE_BACKEND"] = "local"
 
 import pytest  # noqa: E402
 

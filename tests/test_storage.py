@@ -24,11 +24,11 @@ class _StubCOS:
         self.deleted: list[str] = []
 
     def put_object(self, Bucket, Key, Body):
+        # 真实 SDK 的 put_object 同时接受字节与文件流,统一读成字节再记录
+        if hasattr(Body, "read"):
+            Body.seek(0)
+            Body = Body.read()
         self.objects[(Bucket, Key)] = Body
-
-    def upload_fileobj(self, Bucket, Key, Body):
-        Body.seek(0)
-        self.objects[(Bucket, Key)] = Body.read()
 
     def get_object(self, Bucket, Key):
         return {"Body": _FakeStream(self.objects[(Bucket, Key)])}
