@@ -609,3 +609,91 @@ def test_transition_catalog_matches_frontend() -> None:
     assert match, "frontend/src/types.ts 中找不到 VLOG_TRANSITIONS 定义"
     frontend_keys = re.findall(r"key: '(\w+)'", match.group(1))
     assert tuple(frontend_keys) == tuple(item.key for item in VLOG_TRANSITIONS)
+
+
+def test_clip_download_retries_then_stores(client: TestClient, monkeypatch) -> None:
+    """上游视频要尽量拉回对象存储;瞬时失败重试,全部失败才退回远端链接。"""
+    from backend import storage
+    from backend.database import SessionLocal
+    from backend.models import VlogClip
+    from backend.services import vlog_pipeline
+
+    upload = _upload(client, count=3)
+    config = _config(client)
+    project = _create_project(client, upload, config["id"])
+
+    class FlakyAIClient:
+        # 每个片段各建一个客户端实例,各自统计下载次数
+        instances: list["FlakyAIClient"] = []
+
+        def __init__(self, *args, **kwargs):
+            self.attempts = 0
+            FlakyAIClient.instances.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def run_video(self, model, prompt, **kwargs):
+            kwargs["on_submitted"]("task-1")
+            return {"task_id": "task-1", "url": "https://gw.example.com/video/clip.mp4"}
+
+        def download(self, url, timeout=600.0):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise RuntimeError("transient gateway error")
+            return MP4_BYTES
+
+    monkeypatch.setattr(vlog_pipeline, "AIClient", FlakyAIClient)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    vlog_pipeline._run_vlog(project["id"])
+
+    assert FlakyAIClient.instances
+    assert all(instance.attempts == 3 for instance in FlakyAIClient.instances)
+
+    with SessionLocal() as db:
+        clips = db.scalars(select(VlogClip).where(VlogClip.project_id == project["id"])).all()
+        assert clips and all(clip.status == "completed" for clip in clips)
+        for clip in clips:
+            assert clip.video_path and clip.video_url is None
+            assert storage.exists(clip.video_path)
+
+
+def test_clip_download_fallback_keeps_remote_url(client: TestClient, monkeypatch) -> None:
+    from backend.database import SessionLocal
+    from backend.models import VlogClip
+    from backend.services import vlog_pipeline
+
+    upload = _upload(client, count=3)
+    config = _config(client)
+    project = _create_project(client, upload, config["id"])
+
+    class DownAIClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def run_video(self, model, prompt, **kwargs):
+            kwargs["on_submitted"]("task-1")
+            return {"task_id": "task-1", "url": "https://gw.example.com/video/clip.mp4"}
+
+        def download(self, url, timeout=600.0):
+            raise RuntimeError("gateway down")
+
+    monkeypatch.setattr(vlog_pipeline, "AIClient", DownAIClient)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    vlog_pipeline._run_vlog(project["id"])
+
+    with SessionLocal() as db:
+        clips = db.scalars(select(VlogClip).where(VlogClip.project_id == project["id"])).all()
+        assert clips and all(clip.status == "completed" for clip in clips)
+        for clip in clips:
+            assert clip.video_path is None
+            assert clip.video_url == "https://gw.example.com/video/clip.mp4"

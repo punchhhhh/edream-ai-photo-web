@@ -30,6 +30,27 @@ IMAGE_MIME_BY_EXT = {
 }
 HEARTBEAT_INTERVAL_SECONDS = 30.0
 STALE_BUFFER_SECONDS = 600.0
+# 单个项目时间线的片段组上限,防止单条成片渲染时长与体积膨胀
+MAX_VLOG_GROUPS = 20
+# 上游视频下载重试次数;全部失败才退回远端链接(临时链接会过期,尽量落存储)
+CLIP_DOWNLOAD_RETRIES = 3
+
+
+def _download_clip_video(client: AIClient, url: str, clip_id: int) -> bytes | None:
+    """把上游生成的视频拉回来入库;瞬时失败重试,全部失败返回 None。"""
+    for attempt in range(1, CLIP_DOWNLOAD_RETRIES + 1):
+        try:
+            return client.download(url)
+        except Exception:  # noqa: BLE001 —— 网关抖动不能直接让片段退回临时链接
+            logger.warning(
+                "download vlog clip failed (clip %s, attempt %s/%s)",
+                clip_id,
+                attempt,
+                CLIP_DOWNLOAD_RETRIES,
+                exc_info=True,
+            )
+            time.sleep(attempt * 2)
+    return None
 
 
 def _color_histogram(data: bytes) -> list[float]:
@@ -211,13 +232,14 @@ def _generate_clip(session, project: VlogProject, clip: VlogClip) -> None:
             )
             clip.video_url = None
         elif url:
-            try:
+            content = _download_clip_video(client, url, clip.id)
+            if content is not None:
                 clip.video_path = storage.save_bytes(
-                    "videos", client.download(url), ".mp4", user_id=project.user_id
+                    "videos", content, ".mp4", user_id=project.user_id
                 )
                 clip.video_url = None
-            except Exception:  # noqa: BLE001
-                logger.warning("download vlog clip failed, keep remote url: %s", url, exc_info=True)
+            else:
+                logger.warning("download vlog clip failed, keep remote url: %s", url)
                 clip.video_path = None
                 clip.video_url = url
         else:
