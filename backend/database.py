@@ -49,6 +49,14 @@ def _ensure_vlog_transition_schema() -> None:
         statements.append(
             f"ALTER TABLE vlog_projects ADD COLUMN timeline_data JSON NOT NULL DEFAULT {default}"
         )
+    if "merge_status" not in columns:
+        statements.append("ALTER TABLE vlog_projects ADD COLUMN merge_status VARCHAR(20)")
+    if "merge_progress" not in columns:
+        statements.append(
+            "ALTER TABLE vlog_projects ADD COLUMN merge_progress FLOAT NOT NULL DEFAULT 0"
+        )
+    if "merge_error" not in columns:
+        statements.append("ALTER TABLE vlog_projects ADD COLUMN merge_error TEXT")
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))

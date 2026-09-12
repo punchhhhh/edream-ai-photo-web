@@ -23,8 +23,10 @@ from ..schemas import (
     VlogUploadOut,
     VlogVideoAssetOut,
 )
+from ..services import merge_queue, video_merge
 from ..services.vlog_pipeline import (
     ACTIVE_VLOG_STATUSES,
+    MAX_VLOG_GROUPS,
     build_clip_prompt,
     plan_reference_groups,
     start_vlog_thread,
@@ -60,6 +62,9 @@ def _project_out(db: Session, project: VlogProject) -> VlogProjectOut:
         transition_style=project.transition_style,
         status=project.status,
         error=project.error,
+        merge_status=project.merge_status,
+        merge_progress=project.merge_progress or 0.0,
+        merge_error=project.merge_error,
         final_video_url=storage.url(project.final_video_path),
         final_creation_id=project.final_creation_id,
         config_name=project.config_name,
@@ -396,6 +401,8 @@ def create_vlog(
     style_description = preset.description if preset else "自然光、真实质感、克制运镜"
     ratio = payload.ratio or _infer_ratio(payload.image_paths)
     groups = payload.image_groups or plan_reference_groups(payload.image_paths)
+    if len(groups) > MAX_VLOG_GROUPS:
+        raise HTTPException(422, f"最多支持 {MAX_VLOG_GROUPS} 个 AI 片段组，请合并或删减")
     if payload.image_groups is not None:
         flattened = [path for group in payload.image_groups for path in group]
         if flattened != payload.image_paths:
@@ -536,6 +543,40 @@ def retry_vlog_clip(
     return _project_out(db, project)
 
 
+def _require_mergeable(db: Session, project: VlogProject) -> None:
+    """合成前置校验:项目就绪、片段齐全、时间线非空。"""
+    if project.status != "ready_to_merge":
+        raise HTTPException(409, "片段尚未全部生成完成")
+    clips = db.scalars(select(VlogClip).where(VlogClip.project_id == project.id)).all()
+    if any(clip.status != "completed" for clip in clips):
+        raise HTTPException(409, "片段尚未全部生成完成")
+    if not project.timeline_data:
+        raise HTTPException(409, "项目时间线为空,无法合成")
+
+
+@router.post("/vlogs/{project_id}/merge", response_model=VlogProjectOut)
+def submit_vlog_merge(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """提交服务端合成:只入队立即返回,调度线程按全局并发上限认领执行。"""
+    project = _get_project(db, user, project_id)
+    _require_mergeable(db, project)
+    if project.merge_status in (merge_queue.MERGE_QUEUED, merge_queue.MERGE_RUNNING):
+        state = "排队中" if project.merge_status == merge_queue.MERGE_QUEUED else "合成中"
+        raise HTTPException(409, f"该项目已在合成({state}),请勿重复提交")
+    if not video_merge.ffmpeg_available():
+        raise HTTPException(503, "服务端未安装 FFmpeg,暂时无法合成;请联系管理员")
+
+    project.merge_status = merge_queue.MERGE_QUEUED
+    project.merge_progress = 0.0
+    project.merge_error = None
+    db.commit()
+    db.refresh(project)
+    return _project_out(db, project)
+
+
 @router.post("/vlogs/{project_id}/complete", response_model=VlogProjectOut)
 def complete_vlog(
     project_id: int,
@@ -544,12 +585,9 @@ def complete_vlog(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """接收浏览器(FFmpeg.wasm)合成好的成片;前端已切换到服务端合成,保留兼容旧客户端。"""
     project = _get_project(db, user, project_id)
-    if project.status != "ready_to_merge":
-        raise HTTPException(409, "片段尚未全部生成完成")
-    clips = db.scalars(select(VlogClip).where(VlogClip.project_id == project.id)).all()
-    if any(clip.status != "completed" for clip in clips):
-        raise HTTPException(409, "片段尚未全部生成完成")
+    _require_mergeable(db, project)
     if not (file.content_type or "").lower().startswith("video/"):
         raise HTTPException(422, "仅支持视频文件")
     head = file.file.read(1024 * 1024)
@@ -567,27 +605,8 @@ def complete_vlog(
     except media.MediaTooLarge:
         raise HTTPException(422, f"Vlog 成片不能超过 {settings.max_video_upload_mb}MB") from None
 
-    creation = Creation(
-        user_id=project.user_id,
-        input_text=project.description or f"{project.style} Vlog",
-        style=project.style,
-        expanded_prompt=f"Vlog {len(project.image_paths)} 张图片自然转场合成",
-        image_source="merged",
-        image_path=project.image_paths[0] if project.image_paths else None,
-        video_path=video_path,
-        duration=max(1, min(round(actual_duration), 3600)),
-        status="completed",
-        config_id=project.config_id,
-        config_name=project.config_name,
-        video_model=project.video_model,
-    )
-    db.add(creation)
     try:
-        db.flush()
-        project.final_video_path = video_path
-        project.final_creation_id = creation.id
-        project.status = "completed"
-        project.error = None
+        merge_queue.finalize_vlog_merge(db, project, video_path, actual_duration)
         db.commit()
     except Exception:
         db.rollback()
@@ -607,6 +626,12 @@ def abandon_vlog(
     project = _get_project(db, user, project_id)
     if project.status not in ACTIVE_VLOG_STATUSES:
         raise HTTPException(409, "项目已结束，无需放弃")
+    # 服务端合成一并取消:排队中的由 worker 启动时自查跳过,运行中的 terminate 进程
+    if project.merge_status in (merge_queue.MERGE_QUEUED, merge_queue.MERGE_RUNNING):
+        merge_queue.cancel_merge(project.id)
+        project.merge_status = None
+        project.merge_progress = 0.0
+        project.merge_error = None
     project.status = "cancelled"
     project.error = "用户已放弃该项目"
     db.execute(

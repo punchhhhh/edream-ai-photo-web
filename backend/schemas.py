@@ -156,6 +156,7 @@ class VlogCreateIn(BaseModel):
     description: str = Field(default="", max_length=500)
     transition_style: str = Field(default="fade", max_length=30)
     # 可编辑时间线；未传时由后端根据 AI 图片组补齐，兼容旧客户端。
+    # 上限放宽到旧版 36 保历史项目可编辑;20 组的业务上限在 create/merge 时校验并给出明确报错
     timeline_data: list[dict[str, Any]] | None = Field(default=None, max_length=36)
 
 
@@ -164,6 +165,7 @@ class LocalVlogCreateIn(BaseModel):
     style: str = Field(default="写实纪录", max_length=50)
     description: str = Field(default="", max_length=500)
     transition_style: str = Field(default="fade", max_length=30)
+    # 同上:36 是防滥用的格式上限,20 组业务上限在合成时校验
     timeline_data: list[dict[str, Any]] = Field(min_length=1, max_length=36)
 
 
@@ -197,6 +199,10 @@ class VlogProjectOut(BaseModel):
     transition_style: str
     status: str
     error: str | None
+    # 服务端合成队列:None/queued/running/failed/done 与进度、失败原因
+    merge_status: str | None = None
+    merge_progress: float = 0.0
+    merge_error: str | None = None
     final_video_url: str | None
     final_creation_id: int | None
     config_name: str

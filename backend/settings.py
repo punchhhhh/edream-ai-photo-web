@@ -17,8 +17,17 @@ class Settings(BaseSettings):
     max_upload_mb: int = 20
     max_vlog_upload_total_mb: int = 90
     vlog_image_long_edge: int = 1600
-    # 浏览器合成成片回传的大小上限(多段拼接,比单图宽松)
+    # 成片大小上限:服务端合成超限会自动压缩重试(先降码率再降分辨率);上传/回传接口共用
     max_video_upload_mb: int = 500
+
+    # ---- 服务端合成(FFmpeg 任务队列) ----
+    # 全局同时渲染的合成任务数(CPU 大户,限全局不限每用户)。
+    # 并发计数与取消都在进程内:按单进程部署设计,多 uvicorn worker 会各自计数
+    max_merge_workers: int = 1
+    # 调度线程轮询排队任务的间隔(秒)
+    merge_poll_interval: float = 2.0
+    # 单个合成任务的硬超时(秒),超过且无心跳由看门狗回收
+    merge_timeout_seconds: float = 1800.0
 
     # ---- 资产存储(腾讯云 COS) ----
     # local = 本地磁盘(MEDIA_DIR,开发/测试零依赖);cos = 腾讯云 COS(私有读写 + 临时预签名链接)

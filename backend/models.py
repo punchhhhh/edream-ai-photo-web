@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -198,6 +198,11 @@ class VlogProject(Base):
     # pending / generating_video / ready_to_merge / completed / failed / cancelled
     status: Mapped[str] = mapped_column(String(30), default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 服务端合成队列状态:None / queued / running / failed / done(项目本身保持 ready_to_merge,
+    # 直到合成成功才转 completed,因此不触碰"唯一活跃项目"的部分唯一索引)
+    merge_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    merge_progress: Mapped[float] = mapped_column(Float, default=0.0)
+    merge_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_video_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_creation_id: Mapped[int | None] = mapped_column(
         ForeignKey("creations.id", ondelete="SET NULL"), nullable=True
