@@ -104,19 +104,6 @@ export const deleteCreation = (id: number) => request<{ ok: boolean }>(`/api/cre
 // ---- 风格预设 ----
 export const listStyles = () => request<StylePreset[]>('/api/styles')
 
-export const saveMergedVideo = (
-  file: Blob,
-  meta: { title: string; sourceIds: number[]; totalDuration: number },
-) => {
-  const form = new FormData()
-  form.append('file', file, 'merged.mp4')
-  form.append('title', meta.title)
-  form.append('source_ids', JSON.stringify(meta.sourceIds))
-  // FFmpeg 的实际时长可能带小数，后端历史接口按整数秒入库。
-  form.append('total_duration', String(Math.max(0, Math.round(meta.totalDuration))))
-  return request<Creation>('/api/creations/merged', { method: 'POST', body: form })
-}
-
 // ---- 多图 Vlog ----
 export const uploadVlogImages = (files: File[]) => {
   const form = new FormData()
@@ -166,9 +153,6 @@ export const retryVlogClip = (projectId: number, clipId: number) =>
 export const abandonVlog = (projectId: number) =>
   request<VlogProject>(`/api/vlogs/${projectId}/abandon`, { method: 'POST' })
 
-export const completeVlog = (projectId: number, file: Blob, actualDuration: number) => {
-  const form = new FormData()
-  form.append('file', file, `vlog-${projectId}.mp4`)
-  form.append('actual_duration', String(Math.max(1, Math.round(actualDuration))))
-  return request<VlogProject>(`/api/vlogs/${projectId}/complete`, { method: 'POST', body: form })
-}
+// 提交服务端合成:入队立即返回,进度随项目轮询(merge_status/merge_progress)
+export const mergeVlog = (projectId: number) =>
+  request<VlogProject>(`/api/vlogs/${projectId}/merge`, { method: 'POST' })

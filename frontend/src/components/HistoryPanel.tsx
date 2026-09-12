@@ -51,6 +51,7 @@ export default function HistoryPanel({ onClose, onChanged, onDeleted, onReuse, o
             ✕
           </button>
         </div>
+        <p className="muted small">视频最多保留一个月，请及时下载备份</p>
         {error && <div className="alert error">{error}</div>}
         {creations.length === 0 ? (
           <div className="empty">还没有生成过视频,去创作第一条吧 🎬</div>

@@ -115,6 +115,10 @@ export interface VlogProject {
   transition_style: VlogTransition
   status: 'pending' | 'generating_video' | 'ready_to_merge' | 'completed' | 'failed'
   error: string | null
+  // 服务端合成队列状态:项目本身停在 ready_to_merge,合成成功才转 completed
+  merge_status: 'queued' | 'running' | 'failed' | 'done' | null
+  merge_progress: number
+  merge_error: string | null
   final_video_url: string | null
   final_creation_id: number | null
   config_name: string
@@ -159,3 +163,6 @@ export const STATUS_TEXT: Record<string, string> = {
   failed: '失败',
   cancelled: '已放弃',
 }
+
+/** 统一转场时长(秒),与后端 video_merge.VLOG_TRANSITION_SECONDS 保持一致,用于预计总时长。 */
+export const VLOG_TRANSITION_SECONDS = 0.6
