@@ -215,13 +215,6 @@ function quotaPercent(quota: Quota | null) {
   return Math.min(100, (quota.used_bytes / quota.limit_bytes) * 100);
 }
 
-function belongsToType(asset: EnterpriseAsset, type: MaterialType) {
-  if (type === "image") {
-    return asset.content_type === "image" || asset.content_type === "source";
-  }
-  return asset.content_type === type;
-}
-
 function downloadUrl(contentUrl: string) {
   return `${contentUrl}${contentUrl.includes("?") ? "&" : "?"}download=true`;
 }
@@ -611,20 +604,14 @@ export default function MaterialsView({ profile }: { profile: OpsProfile }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const uploadLimits = profile.upload_limits ?? DEFAULT_UPLOAD_LIMITS;
-  const canEdit = ["owner", "admin", "editor"].includes(
-    profile.membership?.role ?? "",
-  );
+  const canEdit = profile.membership?.role === "owner";
   const category = categoryFor(purpose);
   const typeDefinition = category.types.find(
     (item) => item.value === materialType,
   )!;
   const currentAssets = useMemo(
-    () =>
-      assets.filter(
-        (asset) =>
-          asset.purpose === purpose && belongsToType(asset, materialType),
-      ),
-    [assets, materialType, purpose],
+    () => assets.filter((asset) => asset.purpose === purpose),
+    [assets, purpose],
   );
   const load = useCallback(async () => {
     try {
@@ -762,7 +749,7 @@ export default function MaterialsView({ profile }: { profile: OpsProfile }) {
         )}
 
         <div className="saved-materials-head">
-          <h3>已保存的{typeDefinition.label}</h3>
+          <h3>已保存的素材</h3>
           <span>{currentAssets.length} 项</span>
         </div>
         {currentAssets.length ? (
@@ -785,11 +772,11 @@ export default function MaterialsView({ profile }: { profile: OpsProfile }) {
                 return <Icon size={22} />;
               })()}
             </span>
-            <strong>还没有{typeDefinition.label}素材</strong>
+            <strong>还没有素材</strong>
             <span>
               {canEdit
                 ? "从上方录入或上传第一项素材"
-                : "企业管理员尚未添加这类素材"}
+                : "该企业尚未添加素材"}
             </span>
           </div>
         )}

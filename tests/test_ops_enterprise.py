@@ -1,4 +1,6 @@
-"""运营平台一期验收：认证、RBAC、素材 CRUD、额度、租户隔离和内部读取。"""
+"""运营平台一期验收：认证、单 Owner、素材 CRUD、额度、租户隔离和内部读取。"""
+
+from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
@@ -101,42 +103,126 @@ def test_enterprise_certification_gate_and_default_quota() -> None:
         assert duplicate.status_code == 409
 
 
-def test_member_roles_are_enforced() -> None:
+def test_enterprise_entry_is_owner_bound_and_old_member_routes_are_removed() -> None:
     from backend.app import create_app
 
     with TestClient(create_app()) as client:
-        _apply_and_approve(client, "owner-a", "MEMBER")
-        editor = client.post(
-            "/api/ops/v1/members",
-            json={"oauth_sub": "editor-a", "role": "editor"},
+        enterprise_id = _apply_and_approve(client, "owner-a", "ENTRY-A")
+        _apply_and_approve(client, "owner-b", "ENTRY-B")
+
+        assert client.get(
+            "/api/ops/v1/members", headers=_headers("owner-a")
+        ).status_code == 404
+        assert client.post(
+            "/api/ops/v1/members", json={"oauth_sub": "other", "role": "viewer"},
+            headers=_headers("owner-a"),
+        ).status_code == 404
+
+        inactive = client.get(
+            "/api/ops/v1/enterprise-entry", headers=_headers("owner-a")
+        )
+        assert inactive.status_code == 200
+        assert inactive.json()["active"] is False
+        assert inactive.json()["entry_url"] is None
+
+        created = client.post(
+            "/api/ops/v1/enterprise-entry",
+            headers={**_headers("owner-a"), "Origin": "http://127.0.0.1:5173"},
+        )
+        assert created.status_code == 200, created.text
+        created_body = created.json()
+        assert created_body["active"] is True
+        assert created_body["enterprise_id"] == enterprise_id
+        assert created_body["entry_url"].startswith("http://127.0.0.1:5173/")
+        token = parse_qs(urlparse(created_body["entry_url"]).query)["enterprise_entry"][0]
+
+        resolved = client.post(
+            "/api/enterprise-entry/resolve",
+            json={"token": token},
             headers=_headers("owner-a"),
         )
-        viewer = client.post(
-            "/api/ops/v1/members",
-            json={"oauth_sub": "viewer-a", "role": "viewer"},
+        assert resolved.status_code == 200
+        assert resolved.json() == {
+            "enterprise_id": enterprise_id,
+            "enterprise_name": "测试企业ENTRY-A",
+        }
+        assert client.get(
+            "/api/enterprise-entry/context", headers=_headers("owner-a")
+        ).json() == resolved.json()
+        assert client.post(
+            "/api/enterprise-entry/resolve",
+            json={"token": token},
+            headers=_headers("owner-b"),
+        ).status_code == 403
+
+        rotated = client.post(
+            "/api/ops/v1/enterprise-entry", headers=_headers("owner-a")
+        )
+        rotated_token = parse_qs(urlparse(rotated.json()["entry_url"]).query)[
+            "enterprise_entry"
+        ][0]
+        assert rotated_token != token
+        assert client.post(
+            "/api/enterprise-entry/resolve",
+            json={"token": token},
             headers=_headers("owner-a"),
+        ).status_code == 404
+
+        disabled = client.delete(
+            "/api/ops/v1/enterprise-entry", headers=_headers("owner-a")
         )
-        assert editor.status_code == viewer.status_code == 200
-        assert client.get("/api/ops/v1/assets", headers=_headers("viewer-a")).status_code == 200
-        denied = client.post(
-            "/api/ops/v1/assets/text",
-            json={"name": "人格", "purpose": "ip_setting", "text_content": "身份：科学家"},
-            headers=_headers("viewer-a"),
+        assert disabled.status_code == 200
+        assert disabled.json()["active"] is False
+        assert client.post(
+            "/api/enterprise-entry/resolve",
+            json={"token": rotated_token},
+            headers=_headers("owner-a"),
+        ).status_code == 404
+
+
+def test_legacy_non_owner_relationship_is_disabled_and_ignored() -> None:
+    from backend.app import create_app
+    from backend.database import SessionLocal, init_db
+    from backend.models import EnterpriseMembership, User
+
+    with TestClient(create_app()) as client:
+        enterprise_id = _apply_and_approve(client, "owner-a", "LEGACY")
+        with SessionLocal() as db:
+            legacy_user = User(oauth_sub="legacy-viewer", status="active")
+            db.add(legacy_user)
+            db.flush()
+            legacy_user_id = legacy_user.id
+            db.add(
+                EnterpriseMembership(
+                    enterprise_id=enterprise_id,
+                    user_id=legacy_user_id,
+                    role="viewer",
+                    status="active",
+                )
+            )
+            db.commit()
+
+        init_db()
+
+        with SessionLocal() as db:
+            relationship = db.query(EnterpriseMembership).filter_by(
+                user_id=legacy_user_id
+            ).one()
+            assert relationship.status == "disabled"
+
+        profile = client.get(
+            "/api/ops/v1/profile", headers=_headers("legacy-viewer")
         )
-        assert denied.status_code == 403
-        allowed = client.post(
-            "/api/ops/v1/assets/text",
-            json={"name": "人格", "purpose": "ip_setting", "text_content": "身份：科学家"},
-            headers=_headers("editor-a"),
+        assert profile.status_code == 200
+        assert profile.json()["enterprise"] is None
+        assert profile.json()["membership"] is None
+        applied = client.post(
+            "/api/ops/v1/enterprise",
+            json=_enterprise_payload("旧成员的新企业", "CREDIT-LEGACY-NEW"),
+            headers=_headers("legacy-viewer"),
         )
-        assert allowed.status_code == 200
-        owner_membership = next(
-            row for row in client.get("/api/ops/v1/members", headers=_headers("owner-a")).json()
-            if row["role"] == "owner"
-        )
-        assert client.delete(
-            f"/api/ops/v1/members/{owner_membership['id']}", headers=_headers("owner-a")
-        ).status_code == 409
+        assert applied.status_code == 200
+        assert applied.json()["membership"]["role"] == "owner"
 
 
 def test_text_and_file_asset_crud_with_versions_and_quota() -> None:

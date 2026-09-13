@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..schemas import AuthUserOut
 
 EnterpriseStatus = Literal["pending", "approved", "rejected", "suspended", "archived"]
-MemberRole = Literal["owner", "admin", "editor", "viewer"]
 
 
 class EnterpriseOut(BaseModel):
@@ -83,14 +82,22 @@ class MembershipOut(BaseModel):
     created_at: datetime
 
 
-class MemberCreateIn(BaseModel):
-    oauth_sub: str = Field(min_length=1, max_length=255)
-    role: Literal["admin", "editor", "viewer"] = "viewer"
+class EnterpriseEntryOut(BaseModel):
+    enterprise_id: int
+    enterprise_name: str
+    active: bool
+    entry_url: str | None
+    created_at: datetime | None
+    updated_at: datetime | None
 
 
-class MemberUpdateIn(BaseModel):
-    role: MemberRole | None = None
-    status: Literal["active", "disabled"] | None = None
+class EnterpriseEntryResolveIn(BaseModel):
+    token: str = Field(min_length=20, max_length=128)
+
+
+class EnterpriseBusinessContextOut(BaseModel):
+    enterprise_id: int
+    enterprise_name: str
 
 
 class OpsProfileOut(BaseModel):

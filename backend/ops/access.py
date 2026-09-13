@@ -37,7 +37,10 @@ def require_platform_admin(db: Session, user: User) -> None:
 def membership_for_user(db: Session, user_id: int) -> EnterpriseMembership | None:
     return db.scalar(
         select(EnterpriseMembership)
-        .where(EnterpriseMembership.user_id == user_id)
+        .where(
+            EnterpriseMembership.user_id == user_id,
+            EnterpriseMembership.role == "owner",
+        )
         .order_by(EnterpriseMembership.id.desc())
     )
 
@@ -54,6 +57,8 @@ def require_enterprise(
     enterprise = db.get(Enterprise, membership.enterprise_id)
     if enterprise is None:
         raise HTTPException(404, "企业不存在")
+    if membership.role != "owner":
+        raise HTTPException(403, "当前版本仅允许企业 Owner 使用企业能力")
     if enterprise.status != "approved" or membership.status not in {"active", "approved"}:
         raise HTTPException(403, "企业认证审核通过且账号启用后才可访问")
     if roles is not None and membership.role not in roles:

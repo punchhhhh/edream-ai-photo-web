@@ -8,35 +8,40 @@ import {
   ArrowLeft,
   Boxes,
   Building2,
+  Check,
+  Copy,
+  Download,
+  ExternalLink,
+  Link2,
   LogIn,
   LogOut,
+  QrCode,
+  RefreshCw,
   ShieldCheck,
-  Users,
 } from "lucide-react";
+import QRCode from "qrcode";
 import {
-  addMember,
   addPlatformAdmin,
   applyEnterprise,
   cancelEnterprise,
   changeEnterpriseStatus,
-  deleteMember,
+  createEnterpriseEntry,
   deletePlatformAdmin,
+  disableEnterpriseEntry,
   fetchOpsProfile,
+  getEnterpriseEntry,
   getEnterpriseQuota,
   listEnterprises,
-  listMembers,
   listPlatformAdmins,
   logoutOps,
   reviewEnterprise,
   updateEnterprise,
   updateEnterpriseQuota,
-  updateMember,
 } from "./api";
 import type {
   Enterprise,
+  EnterpriseEntry,
   EnterpriseForm,
-  EnterpriseMembership,
-  MemberRole,
   OpsProfile,
   PlatformAdmin,
   Quota,
@@ -48,12 +53,6 @@ import {
   isExplicitlyLoggedOut,
 } from "../authNavigation";
 import "./ops.css";
-const ROLE_LABEL: Record<MemberRole, string> = {
-  owner: "Owner",
-  admin: "管理员",
-  editor: "编辑",
-  viewer: "只读",
-};
 const EMPTY_ENTERPRISE: EnterpriseForm = {
   name: "",
   credit_code: "",
@@ -294,15 +293,15 @@ function CertificationView({
   );
 }
 
-function MembersView({ profile }: { profile: OpsProfile }) {
-  const [members, setMembers] = useState<EnterpriseMembership[]>([]);
-  const [sub, setSub] = useState("");
-  const [role, setRole] = useState<Exclude<MemberRole, "owner">>("viewer");
+function EnterpriseEntryView() {
+  const [entry, setEntry] = useState<EnterpriseEntry | null>(null);
+  const [qrCode, setQrCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
-  const canManage = ["owner", "admin"].includes(profile.membership?.role ?? "");
   const load = useCallback(async () => {
     try {
-      setMembers(await listMembers());
+      setEntry(await getEnterpriseEntry());
       setError("");
     } catch (err) {
       setError(errorMessage(err));
@@ -311,145 +310,156 @@ function MembersView({ profile }: { profile: OpsProfile }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!entry?.active || !entry.entry_url) {
+      setQrCode("");
+      return;
+    }
+    void QRCode.toDataURL(entry.entry_url, {
+      width: 320,
+      margin: 2,
+      errorCorrectionLevel: "M",
+      color: { dark: "#164e42", light: "#ffffff" },
+    })
+      .then(setQrCode)
+      .catch(() => setError("二维码生成失败，请刷新后重试"));
+  }, [entry]);
+
+  const generate = async () => {
+    if (
+      entry?.active &&
+      !window.confirm("更新后原链接和二维码将立即失效，确定继续吗？")
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      setEntry(await createEnterpriseEntry());
+      setCopied(false);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disable = async () => {
+    if (!window.confirm("停用后当前链接和二维码将无法访问，确定继续吗？"))
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      setEntry(await disableEnterpriseEntry());
+      setCopied(false);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <section>
+    <section className="enterprise-entry-view">
       <div className="ops-section-head">
         <div>
-          <h2>企业成员</h2>
-          <p>
-            {members.filter((item) => item.status === "active").length}{" "}
-            个启用账号
-          </p>
+          <h2>企业入口</h2>
+          <p>为当前企业生成专属业务入口，仅绑定唯一的 Casdoor Owner</p>
         </div>
       </div>
       {error && <div className="ops-alert error">{error}</div>}
-      {canManage && (
-        <form
-          className="member-add"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            try {
-              await addMember(sub, role);
-              setSub("");
-              await load();
-            } catch (err) {
-              setError(errorMessage(err));
-            }
-          }}
-        >
-          <label>
-            Casdoor 用户标识
-            <input
-              required
-              value={sub}
-              onChange={(e) => setSub(e.target.value)}
-              placeholder="oauth_sub"
-            />
-          </label>
-          <label>
-            角色
-            <select
-              value={role}
-              onChange={(e) =>
-                setRole(e.target.value as Exclude<MemberRole, "owner">)
-              }
-            >
-              <option value="admin">管理员</option>
-              <option value="editor">编辑</option>
-              <option value="viewer">只读</option>
-            </select>
-          </label>
-          <button className="primary">添加成员</button>
-        </form>
-      )}
-      <div className="ops-table-wrap">
-        <table className="ops-table">
-          <thead>
-            <tr>
-              <th>账号</th>
-              <th>角色</th>
-              <th>状态</th>
-              <th>加入时间</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {members.map((member) => (
-              <tr key={member.id}>
-                <td>
-                  <strong>{member.display_name || member.oauth_sub}</strong>
-                  <small>{member.email || member.oauth_sub}</small>
-                </td>
-                <td>
-                  {canManage && member.role !== "owner" ? (
-                    <select
-                      value={member.role}
-                      onChange={async (e) => {
-                        try {
-                          await updateMember(member.id, {
-                            role: e.target.value as MemberRole,
-                          });
-                          await load();
-                        } catch (err) {
-                          setError(errorMessage(err));
-                        }
-                      }}
-                    >
-                      {["admin", "editor", "viewer"].map((value) => (
-                        <option key={value} value={value}>
-                          {ROLE_LABEL[value as MemberRole]}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    ROLE_LABEL[member.role]
-                  )}
-                </td>
-                <td>
-                  <StatusBadge status={member.status} />
-                </td>
-                <td>{formatDate(member.created_at)}</td>
-                <td>
-                  {canManage && member.role !== "owner" && (
-                    <div className="row-actions">
-                      <button
-                        onClick={async () => {
-                          try {
-                            await updateMember(member.id, {
-                              status:
-                                member.status === "active"
-                                  ? "disabled"
-                                  : "active",
-                            });
-                            await load();
-                          } catch (err) {
-                            setError(errorMessage(err));
-                          }
-                        }}
-                      >
-                        {member.status === "active" ? "停用" : "启用"}
-                      </button>
-                      <button
-                        className="danger-text"
-                        onClick={async () => {
-                          if (!window.confirm("确定移除该成员吗？")) return;
-                          try {
-                            await deleteMember(member.id);
-                            await load();
-                          } catch (err) {
-                            setError(errorMessage(err));
-                          }
-                        }}
-                      >
-                        移除
-                      </button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="enterprise-entry-content">
+        <div className="enterprise-entry-details">
+          <div className="entry-status-row">
+            <span className={`entry-status ${entry?.active ? "active" : "inactive"}`}>
+              {entry?.active ? "入口已启用" : "尚未生成入口"}
+            </span>
+            {entry?.updated_at && <small>更新于 {formatDate(entry.updated_at)}</small>}
+          </div>
+
+          {entry?.active && entry.entry_url ? (
+            <>
+              <label className="entry-url-label" htmlFor="enterprise-entry-url">
+                企业专属访问链接
+              </label>
+              <div className="entry-url-row">
+                <input id="enterprise-entry-url" readOnly value={entry.entry_url} />
+                <button
+                  className="icon-button"
+                  title="复制链接"
+                  aria-label="复制链接"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(entry.entry_url!);
+                      setCopied(true);
+                      window.setTimeout(() => setCopied(false), 1800);
+                    } catch {
+                      setError("浏览器未允许复制，请手动选择链接");
+                    }
+                  }}
+                >
+                  {copied ? <Check size={17} /> : <Copy size={17} />}
+                </button>
+                <a
+                  className="entry-open-button"
+                  href={entry.entry_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <ExternalLink size={16} />
+                  打开
+                </a>
+              </div>
+              <p className="entry-security-note">
+                链接用于识别企业；访问时仍会校验登录账号必须是该企业已认证的 Owner。
+              </p>
+              <div className="entry-actions">
+                <button onClick={() => void generate()} disabled={busy}>
+                  <RefreshCw size={16} />
+                  更新链接
+                </button>
+                <button
+                  className="danger-text-button"
+                  onClick={() => void disable()}
+                  disabled={busy}
+                >
+                  停用入口
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="entry-empty-state">
+              <Link2 size={26} />
+              <strong>生成企业专属业务入口</strong>
+              <span>生成后可复制链接或下载二维码，提供给企业唯一账号使用。</span>
+              <button className="primary" onClick={() => void generate()} disabled={busy}>
+                <Link2 size={16} />
+                {busy ? "生成中..." : "生成入口"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="enterprise-entry-qr">
+          <div className="entry-qr-title">
+            <QrCode size={18} />
+            <strong>入口二维码</strong>
+          </div>
+          {qrCode ? (
+            <>
+              <img src={qrCode} alt={`${entry?.enterprise_name ?? "企业"}专属入口二维码`} />
+              <a href={qrCode} download="enterprise-entry.png">
+                <Download size={16} />
+                下载二维码
+              </a>
+            </>
+          ) : (
+            <div className="entry-qr-placeholder">
+              <QrCode size={36} />
+              <span>生成入口后显示</span>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -818,7 +828,7 @@ export default function OpsApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<
-    "materials" | "members" | "enterprise" | "admin"
+    "materials" | "entry" | "enterprise" | "admin"
   >("materials");
   const reload = useCallback(async () => {
     if (loggedOut) {
@@ -855,7 +865,7 @@ export default function OpsApp() {
             <span>eD</span>
             <div>
               <strong>eDream 企业中心</strong>
-              <small>素材与账号管理</small>
+              <small>素材与企业入口</small>
             </div>
           </a>
         </header>
@@ -884,7 +894,7 @@ export default function OpsApp() {
           <span>eD</span>
           <div>
             <strong>eDream 企业中心</strong>
-            <small>素材与账号管理</small>
+            <small>素材与企业入口</small>
           </div>
         </a>
         <div className="ops-header-meta">
@@ -928,11 +938,11 @@ export default function OpsApp() {
                   素材管理
                 </button>
                 <button
-                  className={visibleTab === "members" ? "active" : ""}
-                  onClick={() => setTab("members")}
+                  className={visibleTab === "entry" ? "active" : ""}
+                  onClick={() => setTab("entry")}
                 >
-                  <Users size={17} />
-                  企业成员
+                  <Link2 size={17} />
+                  企业入口
                 </button>
                 <button
                   className={visibleTab === "enterprise" ? "active" : ""}
@@ -964,8 +974,8 @@ export default function OpsApp() {
             {visibleTab === "materials" && enterpriseReady && (
               <MaterialsView profile={profile} />
             )}
-            {visibleTab === "members" && enterpriseReady && (
-              <MembersView profile={profile} />
+            {visibleTab === "entry" && enterpriseReady && (
+              <EnterpriseEntryView />
             )}
             {visibleTab === "enterprise" && enterpriseReady && (
               <EnterpriseSettingsView profile={profile} reload={reload} />

@@ -1,9 +1,8 @@
 import type {
   Enterprise,
   EnterpriseAsset,
+  EnterpriseEntry,
   EnterpriseForm,
-  EnterpriseMembership,
-  MemberRole,
   OpsProfile,
   PlatformAdmin,
   Purpose,
@@ -119,26 +118,12 @@ export const replaceAssetFile = (id: number, file: File) => {
 export const deleteEnterpriseAsset = (id: number) =>
   request<{ ok: boolean }>(`/api/ops/v1/assets/${id}`, { method: "DELETE" });
 
-export const listMembers = () =>
-  request<EnterpriseMembership[]>("/api/ops/v1/members");
-export const addMember = (
-  oauth_sub: string,
-  role: Exclude<MemberRole, "owner">,
-) =>
-  request<EnterpriseMembership>(
-    "/api/ops/v1/members",
-    json("POST", { oauth_sub, role }),
-  );
-export const updateMember = (
-  id: number,
-  payload: { role?: MemberRole; status?: string },
-) =>
-  request<EnterpriseMembership>(
-    `/api/ops/v1/members/${id}`,
-    json("PATCH", payload),
-  );
-export const deleteMember = (id: number) =>
-  request<{ ok: boolean }>(`/api/ops/v1/members/${id}`, { method: "DELETE" });
+export const getEnterpriseEntry = () =>
+  request<EnterpriseEntry>("/api/ops/v1/enterprise-entry");
+export const createEnterpriseEntry = () =>
+  request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", { method: "POST" });
+export const disableEnterpriseEntry = () =>
+  request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", { method: "DELETE" });
 
 export const listEnterprises = (status = "all") =>
   request<Enterprise[]>(

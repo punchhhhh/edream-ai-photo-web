@@ -206,7 +206,7 @@ def checksum_file(fileobj) -> str:
 def member_out(db: Session, membership: EnterpriseMembership) -> MembershipOut:
     user = db.get(User, membership.user_id)
     if user is None:
-        raise HTTPException(500, "企业成员用户不存在")
+        raise HTTPException(500, "企业 Owner 用户不存在")
     return MembershipOut(
         id=membership.id,
         enterprise_id=membership.enterprise_id,

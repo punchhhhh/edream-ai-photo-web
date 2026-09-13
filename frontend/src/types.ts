@@ -6,6 +6,11 @@ export interface AuthUser {
   avatar_url: string | null
 }
 
+export interface EnterpriseBusinessContext {
+  enterprise_id: number
+  enterprise_name: string
+}
+
 export interface ModelConfig {
   id: number
   name: string

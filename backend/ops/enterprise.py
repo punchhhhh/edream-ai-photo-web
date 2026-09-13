@@ -1,7 +1,9 @@
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +15,7 @@ from ..models import (
     Enterprise,
     EnterpriseAsset,
     EnterpriseAssetVersion,
+    EnterpriseEntryToken,
     EnterpriseMembership,
     PlatformUserRole,
     User,
@@ -32,13 +35,11 @@ from .schemas import (
     AssetTextCreateIn,
     AssetUpdateIn,
     EnterpriseApplyIn,
+    EnterpriseEntryOut,
     EnterpriseOut,
     EnterpriseReviewIn,
     EnterpriseStatusIn,
     EnterpriseUpdateIn,
-    MemberCreateIn,
-    MembershipOut,
-    MemberUpdateIn,
     OpsProfileOut,
     PlatformAdminCreateIn,
     PlatformAdminOut,
@@ -63,8 +64,7 @@ from .service import (
 )
 
 router = APIRouter(prefix="/ops/v1", tags=["ops-enterprise"])
-EDIT_ROLES = {"owner", "admin", "editor"}
-ADMIN_ROLES = {"owner", "admin"}
+EDIT_ROLES = {"owner"}
 
 
 def _auth_user_out(user: User) -> AuthUserOut:
@@ -240,123 +240,116 @@ def get_quota(db: Session = Depends(get_db), user: User = Depends(get_current_us
     return QuotaOut.model_validate(quota)
 
 
-@router.get("/members", response_model=list[MembershipOut])
-def list_members(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    context = require_enterprise(db, user)
-    rows = db.scalars(
-        select(EnterpriseMembership)
-        .where(EnterpriseMembership.enterprise_id == context.enterprise.id)
-        .order_by(EnterpriseMembership.id)
-    ).all()
-    return [member_out(db, row) for row in rows]
+def _entry_out(
+    request: Request,
+    enterprise: Enterprise,
+    entry: EnterpriseEntryToken | None,
+) -> EnterpriseEntryOut:
+    active = entry is not None and entry.status == "active"
+    entry_url = None
+    if active:
+        origin = settings.enterprise_business_base_url.strip().rstrip("/")
+        if not origin:
+            for candidate in (
+                request.headers.get("origin", ""),
+                request.headers.get("referer", ""),
+            ):
+                parsed = urlsplit(candidate)
+                if parsed.scheme in {"http", "https"} and parsed.netloc:
+                    origin = f"{parsed.scheme}://{parsed.netloc}"
+                    break
+        if not origin:
+            origin = str(request.base_url).rstrip("/")
+        entry_url = f"{origin}/?{urlencode({'enterprise_entry': entry.token})}"
+    return EnterpriseEntryOut(
+        enterprise_id=enterprise.id,
+        enterprise_name=enterprise.name,
+        active=active,
+        entry_url=entry_url,
+        created_at=entry.created_at if entry else None,
+        updated_at=entry.updated_at if entry else None,
+    )
 
 
-@router.post("/members", response_model=MembershipOut)
-def add_member(
-    payload: MemberCreateIn,
+@router.get("/enterprise-entry", response_model=EnterpriseEntryOut)
+def get_enterprise_entry(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    context = require_enterprise(db, user, roles=ADMIN_ROLES)
-    target = db.scalar(select(User).where(User.oauth_sub == payload.oauth_sub.strip()))
-    if target is None:
-        target = User(oauth_sub=payload.oauth_sub.strip(), status="active")
-        db.add(target)
-        db.flush()
-    other = db.scalar(
-        select(EnterpriseMembership).where(
-            EnterpriseMembership.user_id == target.id,
-            EnterpriseMembership.enterprise_id != context.enterprise.id,
-            EnterpriseMembership.status.in_({"pending", "active", "approved"}),
+    context = require_enterprise(db, user, roles={"owner"})
+    entry = db.scalar(
+        select(EnterpriseEntryToken).where(
+            EnterpriseEntryToken.enterprise_id == context.enterprise.id
         )
     )
-    if other is not None:
-        raise HTTPException(409, "该账号已属于其他企业")
-    membership = db.scalar(
-        select(EnterpriseMembership).where(
-            EnterpriseMembership.user_id == target.id,
-            EnterpriseMembership.enterprise_id == context.enterprise.id,
+    return _entry_out(request, context.enterprise, entry)
+
+
+@router.post("/enterprise-entry", response_model=EnterpriseEntryOut)
+def create_enterprise_entry(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    context = require_enterprise(db, user, roles={"owner"})
+    entry = db.scalar(
+        select(EnterpriseEntryToken).where(
+            EnterpriseEntryToken.enterprise_id == context.enterprise.id
         )
     )
-    if membership is None:
-        membership = EnterpriseMembership(
+    token = secrets.token_urlsafe(32)
+    if entry is None:
+        entry = EnterpriseEntryToken(
             enterprise_id=context.enterprise.id,
-            user_id=target.id,
-            role=payload.role,
+            token=token,
             status="active",
+            created_by_user_id=user.id,
         )
-        db.add(membership)
+        db.add(entry)
     else:
-        membership.role = payload.role
-        membership.status = "active"
+        entry.token = token
+        entry.status = "active"
+        entry.created_by_user_id = user.id
+    db.flush()
     audit(
         db,
         user=user,
         enterprise_id=context.enterprise.id,
-        action="member.add",
-        resource_type="user",
-        resource_id=target.id,
-        details={"role": payload.role},
+        action="enterprise.entry.rotate",
+        resource_type="enterprise_entry",
+        resource_id=entry.id,
     )
     db.commit()
-    db.refresh(membership)
-    return member_out(db, membership)
+    db.refresh(entry)
+    return _entry_out(request, context.enterprise, entry)
 
 
-@router.patch("/members/{membership_id}", response_model=MembershipOut)
-def update_member(
-    membership_id: int,
-    payload: MemberUpdateIn,
+@router.delete("/enterprise-entry", response_model=EnterpriseEntryOut)
+def disable_enterprise_entry(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    context = require_enterprise(db, user, roles=ADMIN_ROLES)
-    membership = db.get(EnterpriseMembership, membership_id)
-    if membership is None or membership.enterprise_id != context.enterprise.id:
-        raise HTTPException(404, "企业成员不存在")
-    if membership.role == "owner" and (payload.role not in {None, "owner"} or payload.status == "disabled"):
-        raise HTTPException(409, "不能降级或停用企业 Owner")
-    if payload.role is not None:
-        membership.role = payload.role
-    if payload.status is not None:
-        membership.status = payload.status
-    audit(
-        db,
-        user=user,
-        enterprise_id=context.enterprise.id,
-        action="member.update",
-        resource_type="membership",
-        resource_id=membership.id,
-        details={"role": membership.role, "status": membership.status},
+    context = require_enterprise(db, user, roles={"owner"})
+    entry = db.scalar(
+        select(EnterpriseEntryToken).where(
+            EnterpriseEntryToken.enterprise_id == context.enterprise.id
+        )
     )
-    db.commit()
-    db.refresh(membership)
-    return member_out(db, membership)
-
-
-@router.delete("/members/{membership_id}")
-def delete_member(
-    membership_id: int,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    context = require_enterprise(db, user, roles=ADMIN_ROLES)
-    membership = db.get(EnterpriseMembership, membership_id)
-    if membership is None or membership.enterprise_id != context.enterprise.id:
-        raise HTTPException(404, "企业成员不存在")
-    if membership.role == "owner":
-        raise HTTPException(409, "不能移除企业 Owner")
-    membership.status = "disabled"
-    audit(
-        db,
-        user=user,
-        enterprise_id=context.enterprise.id,
-        action="member.disable",
-        resource_type="membership",
-        resource_id=membership.id,
-    )
-    db.commit()
-    return {"ok": True}
+    if entry is not None:
+        entry.status = "revoked"
+        audit(
+            db,
+            user=user,
+            enterprise_id=context.enterprise.id,
+            action="enterprise.entry.revoke",
+            resource_type="enterprise_entry",
+            resource_id=entry.id,
+        )
+        db.commit()
+        db.refresh(entry)
+    return _entry_out(request, context.enterprise, entry)
 
 
 @router.get("/assets", response_model=list[AssetOut])
@@ -915,7 +908,10 @@ def review_enterprise(
         select(EnterpriseMembership).where(EnterpriseMembership.enterprise_id == enterprise.id)
     ).all()
     for membership in memberships:
-        membership.status = "active" if payload.status == "approved" else "pending"
+        if membership.role == "owner":
+            membership.status = "active" if payload.status == "approved" else "pending"
+        else:
+            membership.status = "disabled"
     if payload.status == "approved":
         get_or_create_quota(db, enterprise.id, updated_by_user_id=user.id)
     audit(

@@ -1,6 +1,7 @@
 import type {
   AuthUser,
   Creation,
+  EnterpriseBusinessContext,
   ModelConfig,
   StylePreset,
   VlogProject,
@@ -22,7 +23,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith('/api/auth/') && !isExplicitlyLoggedOut()) {
       // 会话失效,跳转 OAuth 登录;next 让登录后回到当前页
-      window.location.href = `/api/auth/login?next=${encodeURIComponent(window.location.pathname)}`
+      const next = `${window.location.pathname}${window.location.search}`
+      window.location.href = `/api/auth/login?next=${encodeURIComponent(next)}`
       throw new Error('登录已失效,正在跳转登录…')
     }
     let detail = `${res.status} ${res.statusText}`
@@ -40,6 +42,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ---- 登录 ----
 export const fetchMe = () => request<AuthUser>('/api/auth/me')
+
+export const getEnterpriseContext = () =>
+  request<EnterpriseBusinessContext | null>('/api/enterprise-entry/context')
+
+export const resolveEnterpriseEntry = (token: string) =>
+  request<EnterpriseBusinessContext>('/api/enterprise-entry/resolve', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
 
 // sso_logout_url:jwt 模式下由页面后台清理 Casdoor 当前设备会话;dev 模式为 null
 export const logout = () =>

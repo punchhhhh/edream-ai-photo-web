@@ -9,23 +9,24 @@
 | 范围 | 改动 |
 | --- | --- |
 | 企业认证 | Casdoor 首次登录后提交企业资料，平台管理员审核通过后启用企业能力 |
-| 企业账号 | `owner/admin/editor/viewer` 四类角色，成员与企业状态共同控制权限 |
+| 企业账号 | 一期每个企业只绑定一个 Casdoor Owner，不提供企业成员邀请和角色管理 |
+| 企业入口 | Ops 生成主业务专属 URL/二维码；登录后按 token 定位企业并再次校验当前 Owner |
 | 素材管理 | 三类业务用途，支持文字和文件的新增、查询、修改、版本替换、删除、预览和下载 |
 | 批量上传 | 图片、视频、文档支持同类型多选；校验单文件、批次总大小、文件数和企业剩余额度 |
 | 对象存储 | 复用主业务 COS 配置，企业对象使用独立 `enterprises/{enterprise_id}/...` 前缀 |
 | 额度 | 默认 2 GB，上传预占、成功计费、失败回滚、删除释放，并记录额度流水 |
 | 内部接口 | 提供服务 Token 鉴权的只读查询、批量解析、素材画像和固定版本内容读取 |
-| 审计 | 企业、成员、素材、额度及内部读取均写入审计日志 |
+| 审计 | 企业、企业入口、素材、额度及内部读取均写入审计日志 |
 | 退出登录 | 本站会话与 Casdoor 当前设备会话后台注销，页面保留在主业务或 `/ops` |
 
 主要代码位置：
 
 ```text
 frontend/src/ops/          企业运营界面
-backend/ops/               企业认证、RBAC、素材、额度和领域服务
+backend/ops/               企业认证、Owner、企业入口、素材、额度和领域服务
 backend/internal/          主业务素材接口
 backend/storage.py         主业务与 Ops 共用的 local/COS 存储抽象
-backend/models.py          企业、成员、素材版本、额度流水和审计模型
+backend/models.py          企业、Owner 关系、入口、素材版本、额度流水和审计模型
 tests/test_ops_enterprise.py  企业隔离和内部接口验收测试
 ```
 
@@ -63,13 +64,32 @@ tests/test_ops_enterprise.py  企业隔离和内部接口验收测试
 
 主业务不能直接信任浏览器传入的 `enterprise_id`。必须在服务端从以下任一可信关系得到：
 
-1. 当前 Casdoor 用户对应的有效 `enterprise_memberships`。
+1. 当前 Casdoor 用户对应的有效 Owner `enterprise_memberships`。
 2. 已在主业务项目或订单上固化的 `enterprise_id`。
 3. 可信内部任务消息中由主业务后端写入的 `enterprise_id`。
 
 若当前用户没有已审核且启用的企业关系，主业务应继续走个人素材流程，不应尝试读取企业素材。
 
-### 3.2 存储与接口隔离
+### 3.2 企业专属入口
+
+Ops 的唯一 Owner 可生成 `https://studio.ymmjc.com/?enterprise_entry=<token>` 和对应二维码。主业务应保留该查询参数完成 Casdoor 登录回跳，然后调用：
+
+```http
+POST /api/enterprise-entry/resolve
+Content-Type: application/json
+
+{"token": "<enterprise_entry>"}
+```
+
+后端只在“token 有效、企业已审核、当前登录用户是该企业有效 Owner”三项同时满足时返回：
+
+```json
+{"enterprise_id": 12, "enterprise_name": "沃乐食品"}
+```
+
+解析成功后前端立即从地址栏删除 token。普通主业务访问可调用 `GET /api/enterprise-entry/context` 按当前 Owner 关系获取相同上下文；个人账号返回 `null`。入口 token 不是授权凭据，不能代替 Casdoor 会话，也不能直接传给内部素材接口。
+
+### 3.3 存储与接口隔离
 
 - 个人对象：`users/{user_id}/{kind}/{filename}`。
 - 企业对象：`enterprises/{enterprise_id}/materials/{asset_id}/v{version}/{filename}`。
@@ -218,7 +238,7 @@ X-Internal-Token: <service-token>
 
 ### 5.1 创建生成任务
 
-1. 用当前登录用户或业务项目在服务端确定 `enterprise_id`。
+1. 用已校验的当前 Owner 上下文或业务项目在服务端确定 `enterprise_id`，不要信任前端自由提交的企业 ID。
 2. 按用途、内容类型、标签或用户明确选择的素材 ID 调用 `search`。
 3. 校验每条结果的 `enterprise_id` 与当前任务一致。
 4. 把将要使用的素材版本快照写入生成任务。
@@ -337,6 +357,7 @@ def load_enterprise_materials(base_url: str, token: str, enterprise_id: int):
 
 ```dotenv
 INTERNAL_SERVICE_TOKENS=<独立随机令牌，多个用逗号分隔>
+ENTERPRISE_BUSINESS_BASE_URL=https://studio.ymmjc.com
 ENTERPRISE_DEFAULT_QUOTA_MB=2048
 ENTERPRISE_BATCH_MAX_FILES=20
 ENTERPRISE_BATCH_MAX_MB=1024
@@ -345,13 +366,14 @@ ENTERPRISE_BATCH_MAX_MB=1024
 建议按以下顺序联调：
 
 1. 在 Ops 创建企业并由平台管理员审核通过。
-2. 分别创建 IP 设定文字、IP 形象图片和品牌产品图片。
-3. 使用正确 Token 查询完整素材画像。
-4. 使用企业 A 查询企业 A 素材并下载固定版本。
-5. 使用企业 A 的路径请求企业 B 素材，确认返回 `404`。
-6. 替换一个素材版本，确认旧任务仍能通过旧 `version_no` 读取原版本。
-7. 停用企业，确认查询和内容读取都返回 `404`。
-8. 删除素材，确认新任务无法获取，已落库任务保留引用快照用于审计。
+2. 生成企业入口，确认 Owner 登录后进入主业务；企业 B 使用企业 A 的入口返回 `403`。
+3. 分别创建 IP 设定文字、IP 形象图片和品牌产品图片。
+4. 使用正确内部 Token 查询完整素材画像。
+5. 使用企业 A 查询企业 A 素材并下载固定版本。
+6. 使用企业 A 的路径请求企业 B 素材，确认返回 `404`。
+7. 替换一个素材版本，确认旧任务仍能通过旧 `version_no` 读取原版本。
+8. 停用企业，确认入口解析、查询和内容读取均不可用。
+9. 删除素材，确认新任务无法获取，已落库任务保留引用快照用于审计。
 
 ## 9. 当前边界
 
@@ -362,5 +384,6 @@ ENTERPRISE_BATCH_MAX_MB=1024
 - 视频转码、抽帧或内容理解。
 - 素材自动评分、自动选择或跨素材去重。
 - 浏览器直接访问内部接口。
+- 一个企业绑定多个 Casdoor 用户及企业内角色管理。
 
 这些能力应由主业务生成链路按实际模型能力逐步增加，但不能绕开 `enterprise_id`、固定版本和校验和三项约束。

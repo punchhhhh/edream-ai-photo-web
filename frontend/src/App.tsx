@@ -7,14 +7,16 @@ import {
   expandText,
   fetchMe,
   generateImage,
+  getEnterpriseContext,
   getCreation,
   listConfigs,
   listCreations,
   listStyles,
   logout,
+  resolveEnterpriseEntry,
   uploadImage,
 } from './api'
-import { STATUS_TEXT, type AuthUser, type Creation, type ImageSource, type ModelConfig, type StylePreset } from './types'
+import { STATUS_TEXT, type AuthUser, type Creation, type EnterpriseBusinessContext, type ImageSource, type ModelConfig, type StylePreset } from './types'
 import { downloadName, notify, requestNotifyPermission } from './utils'
 import { beginLogin, completeLogout, isExplicitlyLoggedOut } from './authNavigation'
 
@@ -31,6 +33,7 @@ const DURATIONS = [4, 5, 10]
 export default function App() {
   const [workspace, setWorkspace] = useState<'creative' | 'vlog'>('creative')
   const [me, setMe] = useState<AuthUser | null>(null)
+  const [enterpriseContext, setEnterpriseContext] = useState<EnterpriseBusinessContext | null>(null)
   const [loggedOut, setLoggedOut] = useState(isExplicitlyLoggedOut)
   const [configs, setConfigs] = useState<ModelConfig[]>([])
   const [styles, setStyles] = useState<StylePreset[]>([])
@@ -63,9 +66,29 @@ export default function App() {
     fetchMe()
       .then(setMe)
       .catch(() => {
-        window.location.href = '/api/auth/login'
+        beginLogin(`${window.location.pathname}${window.location.search}`)
       })
   }, [loggedOut])
+
+  useEffect(() => {
+    if (!me) return
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('enterprise_entry')
+    const clearEntryParameter = () => {
+      if (!token) return
+      params.delete('enterprise_entry')
+      const query = params.toString()
+      window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+    }
+    const loadContext = token ? resolveEnterpriseEntry(token) : getEnterpriseContext()
+    loadContext
+      .then(setEnterpriseContext)
+      .catch((reason) => {
+        setEnterpriseContext(null)
+        setError(reason instanceof Error ? reason.message : '无法识别企业入口')
+      })
+      .finally(clearEntryParameter)
+  }, [me])
 
   const doLogout = async () => {
     let ssoLogoutUrl: string | null = null
@@ -76,6 +99,7 @@ export default function App() {
     }
     setLoggedOut(true)
     setMe(null)
+    setEnterpriseContext(null)
     completeLogout(ssoLogoutUrl)
   }
 
@@ -323,7 +347,7 @@ export default function App() {
               <p>文字生图 · 图片生视频</p>
             </div>
           </div>
-          <button className="btn" onClick={() => beginLogin('/')}>重新登录</button>
+          <button className="btn" onClick={() => beginLogin(`${window.location.pathname}${window.location.search}`)}>重新登录</button>
         </header>
         <div className="callout">已退出登录</div>
       </div>
@@ -349,6 +373,11 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
+          {enterpriseContext && (
+            <span className="enterprise-context-badge" title="当前企业业务身份">
+              企业 · {enterpriseContext.enterprise_name}
+            </span>
+          )}
           <span className="muted small" title={me.oauth_sub}>
             {me.display_name || me.email || me.oauth_sub}
           </span>

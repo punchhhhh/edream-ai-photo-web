@@ -122,7 +122,7 @@ class StylePreset(Base):
 
 
 class Enterprise(Base):
-    """企业认证主体。审核通过后企业成员才能上传企业素材。"""
+    """企业认证主体。审核通过后企业 Owner 才能上传企业素材。"""
 
     __tablename__ = "enterprises"
     __table_args__ = (Index("uq_enterprises_credit_code", "credit_code", unique=True),)
@@ -149,7 +149,7 @@ class Enterprise(Base):
 
 
 class EnterpriseMembership(Base):
-    """Casdoor 用户与企业的关系，企业账号本身不另设密码。"""
+    """Casdoor Owner 与企业的一对一归属关系，企业账号本身不另设密码。"""
 
     __tablename__ = "enterprise_memberships"
     __table_args__ = (
@@ -159,13 +159,33 @@ class EnterpriseMembership(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     enterprise_id: Mapped[int] = mapped_column(ForeignKey("enterprises.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    # owner / admin / editor / viewer
-    role: Mapped[str] = mapped_column(String(30), default="viewer")
+    # 一期只创建 owner；保留字符串字段兼容历史数据迁移。
+    role: Mapped[str] = mapped_column(String(30), default="owner")
     # pending / active / disabled
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnterpriseEntryToken(Base):
+    """企业专属业务入口；Token 只用于定位企业，仍必须校验当前 Owner。"""
+
+    __tablename__ = "enterprise_entry_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

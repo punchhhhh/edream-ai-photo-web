@@ -150,6 +150,13 @@ def _ensure_enterprise_schema() -> None:
             connection.execute(
                 text("UPDATE enterprise_memberships SET status='active' WHERE status='approved'")
             )
+            # 一期收敛为一个企业一个 Casdoor Owner，保留旧成员记录但停止授权。
+            connection.execute(
+                text(
+                    "UPDATE enterprise_memberships SET status='disabled' "
+                    "WHERE role != 'owner' AND status != 'disabled'"
+                )
+            )
 
         # 把早期单表素材提升为 v1，保证已有上传在升级后仍可读取。
         if "enterprise_assets" in tables and "enterprise_asset_versions" in tables:

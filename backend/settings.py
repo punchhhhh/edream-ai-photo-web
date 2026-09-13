@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     enterprise_video_max_mb: int = 500
     enterprise_batch_max_files: int = 20
     enterprise_batch_max_mb: int = 1024
+    # 企业入口跳转到主业务；留空时沿用当前请求域名（本地和同域部署）。
+    enterprise_business_base_url: str = ""
     # 仅主业务服务端使用，逗号分隔；不要暴露给浏览器
     internal_service_tokens: str = ""
 

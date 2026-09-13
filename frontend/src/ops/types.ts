@@ -4,7 +4,6 @@ export type EnterpriseStatus =
   | "rejected"
   | "suspended"
   | "archived";
-export type MemberRole = "owner" | "admin" | "editor" | "viewer";
 export type Purpose =
   | "ip_setting"
   | "ip_visual"
@@ -56,7 +55,7 @@ export interface EnterpriseMembership {
   oauth_sub: string;
   display_name: string | null;
   email: string | null;
-  role: MemberRole;
+  role: "owner";
   status: string;
   created_at: string;
 }
@@ -68,6 +67,15 @@ export interface OpsProfile {
   quota: Quota | null;
   upload_limits?: UploadLimits;
   is_platform_admin: boolean;
+}
+
+export interface EnterpriseEntry {
+  enterprise_id: number;
+  enterprise_name: string;
+  active: boolean;
+  entry_url: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface AssetVersion {

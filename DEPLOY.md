@@ -58,7 +58,7 @@ ENTERPRISE_BATCH_MAX_MB=1024
 ENTERPRISE_MEDIA_DIR=/opt/edream-enterprise-media
 ```
 
-如启用独立运营域名，Casdoor 需同时登记 `https://studio.ymmjc.com/api/auth/callback` 与 `https://ops.studio.ymmjc.com/api/auth/callback`，并删除固定的 `OAUTH_REDIRECT_URI`，让后端按请求域名生成回调；同时把两个 HTTPS 来源都加入 `CORS_ORIGINS`。运营域名 nginx 复用同一 `frontend/dist` 和 `/api/` 反代，并将 `/` 重定向到 `/ops`。
+如启用独立运营域名，Casdoor 需同时登记 `https://studio.ymmjc.com/api/auth/callback` 与 `https://ops.studio.ymmjc.com/api/auth/callback`，并删除固定的 `OAUTH_REDIRECT_URI`，让后端按请求域名生成回调；同时把两个 HTTPS 来源都加入 `CORS_ORIGINS`，设置 `ENTERPRISE_BUSINESS_BASE_URL=https://studio.ymmjc.com`。运营域名 nginx 复用同一 `frontend/dist` 和 `/api/` 反代，并将 `/` 重定向到 `/ops`。
 
 ## 日常发布流程
 

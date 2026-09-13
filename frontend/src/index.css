@@ -83,6 +83,20 @@ body {
   justify-content: flex-end;
 }
 
+.enterprise-context-badge {
+  max-width: 220px;
+  padding: 6px 9px;
+  overflow: hidden;
+  border: 1px solid rgba(79, 198, 165, 0.38);
+  border-radius: 6px;
+  color: #9fe6d2;
+  background: rgba(79, 198, 165, 0.1);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .config-select {
   background: var(--panel-2);
   color: var(--text);
