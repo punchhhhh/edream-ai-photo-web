@@ -12,6 +12,8 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg2://tailaogu@localhost:5432/edream_ai_photo"
     media_dir: str = str(BASE_DIR / "media")
+    # 企业本地素材与公开开发媒体目录物理分离；生产 COS 时该目录不使用
+    enterprise_media_dir: str = str(BASE_DIR / "enterprise_media")
     video_poll_interval: float = 5.0
     video_timeout_seconds: float = 900.0
     max_upload_mb: int = 20
@@ -58,6 +60,18 @@ class Settings(BaseSettings):
     session_cookie_name: str = "edream_session"
     session_cookie_secure: bool = False
     dev_auth_sub: str = "dev-user"
+    # 运营平台管理员 Casdoor 主体标识,逗号分隔。仅管理员可审核企业认证。
+    enterprise_admin_subs: str = ""
+    enterprise_default_quota_mb: int = 2048
+    enterprise_text_max_chars: int = 5000
+    enterprise_image_max_mb: int = 20
+    enterprise_document_max_mb: int = 50
+    enterprise_source_max_mb: int = 200
+    enterprise_video_max_mb: int = 500
+    enterprise_batch_max_files: int = 20
+    enterprise_batch_max_mb: int = 1024
+    # 仅主业务服务端使用，逗号分隔；不要暴露给浏览器
+    internal_service_tokens: str = ""
 
     # 跨域来源,逗号分隔;生产部署改为实际的前端域名
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173"
@@ -65,6 +79,14 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def enterprise_admin_subs_set(self) -> set[str]:
+        return {item.strip() for item in self.enterprise_admin_subs.split(",") if item.strip()}
+
+    @property
+    def internal_service_tokens_set(self) -> set[str]:
+        return {item.strip() for item in self.internal_service_tokens.split(",") if item.strip()}
 
 
 settings = Settings()

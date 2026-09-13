@@ -7,6 +7,7 @@
 | 项 | 值 |
 | --- | --- |
 | 域名 | `https://studio.ymmjc.com`(HTTPS,Let's Encrypt,80 强跳 443) |
+| 运营域名 | 建议 `https://ops.studio.ymmjc.com`，同一前端构建，根路径重定向到 `/ops` |
 | 服务器 | 腾讯云广州 CVM,`ubuntu@134.175.68.24`(SSH 公钥免密) |
 | 部署目录 | `/opt/edream`(后端 + 前端 dist + `.venv` + `.env` + `media/`) |
 | 进程 | systemd 服务 `edream.service`:uvicorn 监听 `127.0.0.1:8000`,单进程 |
@@ -46,7 +47,18 @@ COS_BUCKET=studio-1436584532
 COS_SECRET_ID=...
 COS_SECRET_KEY=...
 COS_PREFIX=edream
+
+# 企业运营平台
+ENTERPRISE_ADMIN_SUBS=<Casdoor oauth_sub，多个用逗号分隔>
+INTERNAL_SERVICE_TOKENS=<独立随机服务令牌，多个用逗号分隔>
+ENTERPRISE_DEFAULT_QUOTA_MB=2048
+ENTERPRISE_BATCH_MAX_FILES=20
+ENTERPRISE_BATCH_MAX_MB=1024
+# 仅 local 存储使用；必须位于 nginx 静态目录之外
+ENTERPRISE_MEDIA_DIR=/opt/edream-enterprise-media
 ```
+
+如启用独立运营域名，Casdoor 需同时登记 `https://studio.ymmjc.com/api/auth/callback` 与 `https://ops.studio.ymmjc.com/api/auth/callback`，并删除固定的 `OAUTH_REDIRECT_URI`，让后端按请求域名生成回调；同时把两个 HTTPS 来源都加入 `CORS_ORIGINS`。运营域名 nginx 复用同一 `frontend/dist` 和 `/api/` 反代，并将 `/` 重定向到 `/ops`。
 
 ## 日常发布流程
 

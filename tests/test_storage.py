@@ -21,14 +21,17 @@ class _StubCOS:
 
     def __init__(self):
         self.objects: dict[tuple[str, str], bytes] = {}
+        self.content_types: dict[tuple[str, str], str | None] = {}
         self.deleted: list[str] = []
+        self.presigned_calls: list[dict] = []
 
-    def put_object(self, Bucket, Key, Body):
+    def put_object(self, Bucket, Key, Body, ContentType=None):
         # 真实 SDK 的 put_object 同时接受字节与文件流,统一读成字节再记录
         if hasattr(Body, "read"):
             Body.seek(0)
             Body = Body.read()
         self.objects[(Bucket, Key)] = Body
+        self.content_types[(Bucket, Key)] = ContentType
 
     def get_object(self, Bucket, Key):
         return {"Body": _FakeStream(self.objects[(Bucket, Key)])}
@@ -40,7 +43,16 @@ class _StubCOS:
     def delete_object(self, Bucket, Key):
         self.deleted.append(Key)
 
-    def get_presigned_url(self, Method, Bucket, Key, Expired):
+    def get_presigned_url(self, Method, Bucket, Key, Expired, Params=None):
+        self.presigned_calls.append(
+            {
+                "Method": Method,
+                "Bucket": Bucket,
+                "Key": Key,
+                "Expired": Expired,
+                "Params": Params or {},
+            }
+        )
         return f"https://{Bucket}.cos.ap-test.myqcloud.com/{Key}?sign&expired={Expired}"
 
 
@@ -74,6 +86,26 @@ def test_local_backend_save_seekable_enforces_limit(tmp_path, monkeypatch):
 
     with pytest.raises(MediaTooLarge):
         storage.save_seekable("videos", io.BytesIO(b"x" * 8192), ".mp4", user_id=3, max_bytes=4096)
+
+
+def test_enterprise_local_storage_is_separate_and_has_no_public_url(tmp_path, monkeypatch):
+    enterprise_root = tmp_path / "enterprise-private"
+    monkeypatch.setattr(settings, "storage_backend", "local")
+    monkeypatch.setattr(settings, "media_dir", str(tmp_path / "public-media"))
+    monkeypatch.setattr(settings, "enterprise_media_dir", str(enterprise_root))
+
+    key = storage.save_enterprise_seekable(
+        "images",
+        io.BytesIO(b"private-image"),
+        ".png",
+        enterprise_id=9,
+        asset_id=12,
+        version=1,
+    )
+    assert key.startswith("enterprises/9/materials/12/v1/")
+    assert storage.url(key) is None
+    assert storage.local_path(key).is_relative_to(enterprise_root)
+    assert storage.read(key) == b"private-image"
 
 
 # ---------------------------------------------------------------- COS 后端(桩)
@@ -120,6 +152,45 @@ def test_cos_backend_save_seekable_uploads_fileobj(monkeypatch):
 
     with pytest.raises(MediaTooLarge):
         storage.save_seekable("videos", io.BytesIO(b"x" * 8192), ".mp4", user_id=1, max_bytes=4096)
+
+
+def test_enterprise_cos_storage_only_uses_private_presigned_url(monkeypatch):
+    stub = _StubCOS()
+    _enable_cos(monkeypatch, stub)
+
+    key = storage.save_enterprise_seekable(
+        "files",
+        io.BytesIO(b"source-bytes"),
+        ".psd",
+        enterprise_id=4,
+        asset_id=8,
+        version=2,
+        content_type="image/vnd.adobe.photoshop",
+    )
+    assert key.startswith("enterprises/4/materials/8/v2/")
+    object_key = ("edream-1250000000", f"edream/{key}")
+    assert stub.content_types[object_key] == "image/vnd.adobe.photoshop"
+    assert storage.url(key) is None
+    signed = storage.private_presigned_url(
+        key,
+        expires_seconds=300,
+        content_type="image/vnd.adobe.photoshop",
+    )
+    assert "/edream/enterprises/4/materials/8/v2/" in signed
+    assert "expired=300" in signed
+    assert stub.presigned_calls[-1]["Params"] == {
+        "response-content-type": "image/vnd.adobe.photoshop"
+    }
+
+    storage.private_presigned_url(
+        key,
+        expires_seconds=120,
+        download_name="沃乐形象.psd",
+        content_type="image/vnd.adobe.photoshop",
+    )
+    disposition = stub.presigned_calls[-1]["Params"]["response-content-disposition"]
+    assert disposition.startswith("attachment; filename*=UTF-8''")
+    assert "%E6%B2%83%E4%B9%90%E5%BD%A2%E8%B1%A1.psd" in disposition
 
 
 def test_assert_ready_rejects_incomplete_cos_config(monkeypatch):

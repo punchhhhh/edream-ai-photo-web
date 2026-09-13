@@ -1,6 +1,19 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -106,6 +119,196 @@ class StylePreset(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class Enterprise(Base):
+    """企业认证主体。审核通过后企业成员才能上传企业素材。"""
+
+    __tablename__ = "enterprises"
+    __table_args__ = (Index("uq_enterprises_credit_code", "credit_code", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), index=True)
+    credit_code: Mapped[str] = mapped_column(String(100), default="", index=True)
+    contact_name: Mapped[str] = mapped_column(String(100), default="")
+    contact_phone: Mapped[str] = mapped_column(String(50), default="")
+    contact_email: Mapped[str] = mapped_column(String(255), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    # pending / approved / rejected / suspended / archived
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnterpriseMembership(Base):
+    """Casdoor 用户与企业的关系，企业账号本身不另设密码。"""
+
+    __tablename__ = "enterprise_memberships"
+    __table_args__ = (
+        Index("uq_enterprise_membership_user_enterprise", "user_id", "enterprise_id", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int] = mapped_column(ForeignKey("enterprises.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # owner / admin / editor / viewer
+    role: Mapped[str] = mapped_column(String(30), default="viewer")
+    # pending / active / disabled
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PlatformUserRole(Base):
+    """应用内平台角色；环境变量中的管理员仅用于首次引导。"""
+
+    __tablename__ = "platform_user_roles"
+    __table_args__ = (Index("uq_platform_user_role", "user_id", "role", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(40), default="platform_admin")
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EnterpriseStorageQuota(Base):
+    """企业对象存储额度；预占字段防止并发上传共同突破上限。"""
+
+    __tablename__ = "enterprise_storage_quotas"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    limit_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    reserved_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnterpriseAsset(Base):
+    """企业素材逻辑记录；具体文字或文件内容保存在版本表。"""
+
+    __tablename__ = "enterprise_assets"
+    __table_args__ = (
+        Index("ix_enterprise_assets_enterprise_purpose", "enterprise_id", "purpose"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int] = mapped_column(ForeignKey("enterprises.id", ondelete="CASCADE"), index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # 兼容早期运营草稿字段；新逻辑以 purpose/content_type 和版本表为准。
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(20), default="")
+    purpose: Mapped[str] = mapped_column(String(40), index=True)
+    content_type: Mapped[str] = mapped_column(String(20), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    mime_type: Mapped[str] = mapped_column(String(100), default="")
+    asset_path: Mapped[str] = mapped_column(Text, default="")
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    description: Mapped[str] = mapped_column(Text, default="")
+    current_version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnterpriseAssetVersion(Base):
+    """素材不可变版本；生成任务保存版本号和哈希即可稳定复现。"""
+
+    __tablename__ = "enterprise_asset_versions"
+    __table_args__ = (
+        Index("uq_enterprise_asset_version", "asset_id", "version_no", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprise_assets.id", ondelete="CASCADE"), index=True
+    )
+    version_no: Mapped[int] = mapped_column(Integer)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mime_type: Mapped[str] = mapped_column(String(100), default="")
+    storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EnterpriseQuotaLedger(Base):
+    """企业空间变更流水，正数占用、负数释放。"""
+
+    __tablename__ = "enterprise_quota_ledger"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="CASCADE"), index=True
+    )
+    asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enterprise_assets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    delta_bytes: Mapped[int] = mapped_column(BigInteger)
+    reason: Mapped[str] = mapped_column(String(50))
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AuditLog(Base):
+    """运营侧关键操作和内部素材读取审计。"""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    actor_type: Mapped[str] = mapped_column(String(20))
+    actor_id: Mapped[str] = mapped_column(String(255), default="")
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    resource_type: Mapped[str] = mapped_column(String(50))
+    resource_id: Mapped[str] = mapped_column(String(100), default="")
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Creation(Base):

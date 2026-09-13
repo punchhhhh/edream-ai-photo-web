@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 media/
+enterprise_media/
 node_modules/
 frontend/dist/
 frontend/public/ffmpeg/

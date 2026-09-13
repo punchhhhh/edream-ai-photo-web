@@ -8,6 +8,8 @@ from fastapi.staticfiles import StaticFiles
 
 from . import media, storage
 from .database import init_db
+from .internal import materials
+from .ops import enterprise
 from .routers import auth, configs, creations, styles, vlogs
 from .schemas import HealthOut
 from .services import merge_queue, video_merge
@@ -71,6 +73,8 @@ def create_app() -> FastAPI:
     app.include_router(creations.router, prefix="/api")
     app.include_router(styles.router, prefix="/api")
     app.include_router(vlogs.router, prefix="/api")
+    app.include_router(enterprise.router, prefix="/api")
+    app.include_router(materials.router, prefix="/api")
 
     @app.get("/api/health", response_model=HealthOut)
     def health():

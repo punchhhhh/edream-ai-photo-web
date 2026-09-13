@@ -3,7 +3,9 @@
 - local(默认):本地磁盘(MEDIA_DIR),经 /api/media 静态服务,开发与测试零依赖
 - cos:腾讯云 COS(私有读写),访问时实时生成临时预签名链接,不依赖任何外部地址
 
-key 布局:users/{user_id}/{kind}/{filename}(kind ∈ images|uploads|videos)
+key 布局:
+- 个人资产:users/{user_id}/{kind}/{filename}(kind ∈ images|uploads|videos)
+- 企业素材:enterprises/{enterprise_id}/materials/{asset_id}/v{version}/{filename}
 数据库只存 key;历史数据的 {kind}/{filename} 布局同样兼容。
 """
 
@@ -12,6 +14,7 @@ import threading
 import time
 import uuid
 from typing import BinaryIO
+from urllib.parse import quote
 
 from . import media
 from .settings import settings
@@ -19,11 +22,22 @@ from .settings import settings
 logger = logging.getLogger(__name__)
 
 KINDS = ("images", "uploads", "videos")
+ENTERPRISE_ASSET_KINDS = ("images", "videos", "files")
 _CHUNK = 1024 * 1024
 
 
 def build_key(user_id: int, kind: str, name: str) -> str:
+    if kind not in KINDS:
+        raise ValueError(f"未知个人资产类型:{kind}")
     return f"users/{user_id}/{kind}/{name}"
+
+
+def build_enterprise_asset_key(
+    enterprise_id: int, asset_id: int, version: int, kind: str, name: str
+) -> str:
+    if kind not in ENTERPRISE_ASSET_KINDS:
+        raise ValueError(f"未知企业素材类型:{kind}")
+    return f"enterprises/{enterprise_id}/materials/{asset_id}/v{version}/{name}"
 
 
 def _new_name(ext: str) -> str:
@@ -99,6 +113,24 @@ def save_bytes(kind: str, data: bytes, ext: str, *, user_id: int) -> str:
     return key
 
 
+def save_enterprise_bytes(
+    kind: str,
+    data: bytes,
+    ext: str,
+    *,
+    enterprise_id: int,
+    asset_id: int,
+    version: int,
+) -> str:
+    """保存企业素材字节内容,返回企业隔离的存储 key。"""
+    key = build_enterprise_asset_key(enterprise_id, asset_id, version, kind, _new_name(ext))
+    if use_cos():
+        cos_client().put_object(Bucket=settings.cos_bucket, Key=_full_key(key), Body=data)
+    else:
+        media.write_rel(key, (data,))
+    return key
+
+
 def save_seekable(
     kind: str, fileobj: BinaryIO, ext: str, *, user_id: int, max_bytes: int | None = None
 ) -> str:
@@ -118,6 +150,40 @@ def save_seekable(
     return key
 
 
+def save_enterprise_seekable(
+    kind: str,
+    fileobj: BinaryIO,
+    ext: str,
+    *,
+    enterprise_id: int,
+    asset_id: int,
+    version: int,
+    max_bytes: int | None = None,
+    content_type: str | None = None,
+) -> str:
+    """保存企业素材文件对象。生产 COS / 本地开发共用同一套 storage 抽象。"""
+    fileobj.seek(0, 2)
+    size = fileobj.tell()
+    fileobj.seek(0)
+    if size == 0:
+        raise media.MediaEmpty(kind)
+    if max_bytes is not None and size > max_bytes:
+        raise media.MediaTooLarge(str(size))
+    key = build_enterprise_asset_key(enterprise_id, asset_id, version, kind, _new_name(ext))
+    if use_cos():
+        kwargs = {
+            "Bucket": settings.cos_bucket,
+            "Key": _full_key(key),
+            "Body": fileobj,
+        }
+        if content_type:
+            kwargs["ContentType"] = content_type
+        cos_client().put_object(**kwargs)
+    else:
+        media.write_rel(key, iter(lambda: fileobj.read(_CHUNK), b""), max_bytes=max_bytes)
+    return key
+
+
 def read(key: str) -> bytes:
     if use_cos():
         resp = cos_client().get_object(Bucket=settings.cos_bucket, Key=_full_key(key))
@@ -131,8 +197,7 @@ def read(key: str) -> bytes:
 def download_to(key: str, fileobj: BinaryIO) -> None:
     """把对象流式写入文件对象;大视频素材不整读进内存(仅 COS 需要,本地可直接用路径)。"""
     resp = cos_client().get_object(Bucket=settings.cos_bucket, Key=_full_key(key))
-    for chunk in resp["Body"].get_stream(chunk_size=_CHUNK):
-        fileobj.write(chunk)
+    fileobj.writelines(resp["Body"].get_stream(chunk_size=_CHUNK))
 
 
 def exists(key: str) -> bool:
@@ -150,6 +215,9 @@ def url(key: str | None) -> str | None:
     """产物的访问地址:COS 生成临时预签名链接;本地走 /api/media。"""
     if not key:
         return None
+    # 企业素材不得通过通用静态媒体地址暴露，只能走 ops/internal 权限接口。
+    if key.startswith("enterprises/"):
+        return None
     if use_cos():
         return cos_client().get_presigned_url(
             Method="GET",
@@ -160,13 +228,49 @@ def url(key: str | None) -> str | None:
     return media.media_url(key)
 
 
-def delete(key: str | None) -> None:
+def private_presigned_url(
+    key: str,
+    *,
+    expires_seconds: int = 300,
+    download_name: str | None = None,
+    content_type: str | None = None,
+) -> str | None:
+    """为已完成业务鉴权的企业素材生成短期 COS 地址；本地存储返回 None。"""
+    if not media.is_safe_rel(key) or not key.startswith("enterprises/"):
+        raise ValueError("非法企业素材 key")
+    if not use_cos():
+        return None
+    params = {}
+    if content_type:
+        params["response-content-type"] = content_type
+    if download_name:
+        encoded_name = quote(download_name, safe="")
+        params["response-content-disposition"] = (
+            f"attachment; filename*=UTF-8''{encoded_name}"
+        )
+    return cos_client().get_presigned_url(
+        Method="GET",
+        Bucket=settings.cos_bucket,
+        Key=_full_key(key),
+        Expired=expires_seconds,
+        Params=params,
+    )
+
+
+def local_path(key: str):
+    """返回本地存储绝对路径；COS 模式返回 None。调用方必须先完成权限校验。"""
+    return None if use_cos() else media.safe_abs_path(key)
+
+
+def delete(key: str | None) -> bool:
     if not key or not media.is_safe_rel(key):
-        return
+        return False
     if use_cos():
         try:
             cos_client().delete_object(Bucket=settings.cos_bucket, Key=_full_key(key))
-        except Exception:  # noqa: BLE001 —— 删除失败只记日志,不阻断业务
+        except Exception:
             logger.warning("delete cos object failed: %s", key, exc_info=True)
+            return False
     else:
         media.remove_rel(key)
+    return True

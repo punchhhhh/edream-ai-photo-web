@@ -1,7 +1,10 @@
 """媒体文件辅助:魔数嗅探、相对路径白名单、本地原子落盘。
 
-相对路径(存储 key)布局:users/{user_id}/{kind}/{filename};历史数据可能是 {kind}/{filename}。
-本地后端落在 MEDIA_DIR 下经 /api/media 静态服务;对象存储后端见 backend/storage.py。
+相对路径(存储 key)布局:users/{user_id}/{kind}/{filename};企业素材为
+enterprises/{enterprise_id}/materials/{asset_id}/v{version}/{filename};历史数据可能是
+{kind}/{filename} 或 enterprises/{enterprise_id}/assets/{kind}/{filename}。
+个人媒体落在 MEDIA_DIR 下经 /api/media 静态服务；企业素材落在独立的
+ENTERPRISE_MEDIA_DIR，只能通过带权限的接口读取。对象存储后端见 backend/storage.py。
 """
 
 import re
@@ -12,8 +15,13 @@ from .settings import settings
 
 ALLOWED_IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 
-# 相对路径白名单:可选 users/{uid} 前缀 + 三个子目录之一的单层文件名,拒绝 `..`/绝对路径等穿越
-_SAFE_REL = re.compile(r"(?:users/\d{1,10}/)?(?:images|uploads|videos)/[A-Za-z0-9._-]{1,150}")
+# 相对路径白名单:个人素材、企业素材和历史单层素材。拒绝 `..`/绝对路径等穿越
+_SAFE_REL = re.compile(
+    r"(?:(?:users/\d{1,10}/)?(?:images|uploads|videos)"
+    r"|enterprises/\d{1,10}/assets/(?:images|videos|files)"
+    r"|enterprises/\d{1,10}/materials/\d{1,10}/v\d{1,6})"
+    r"/[A-Za-z0-9._-]{1,150}"
+)
 
 
 class MediaTooLarge(ValueError):
@@ -28,9 +36,18 @@ def media_root() -> Path:
     return Path(settings.media_dir)
 
 
+def enterprise_media_root() -> Path:
+    return Path(settings.enterprise_media_dir)
+
+
+def _root_for_rel(rel: str) -> Path:
+    return enterprise_media_root() if rel.startswith("enterprises/") else media_root()
+
+
 def ensure_dirs() -> None:
     for sub in ("images", "videos", "uploads"):
         (media_root() / sub).mkdir(parents=True, exist_ok=True)
+    enterprise_media_root().mkdir(parents=True, exist_ok=True)
 
 
 def is_safe_rel(rel: str | None) -> bool:
@@ -39,12 +56,14 @@ def is_safe_rel(rel: str | None) -> bool:
 
 def safe_abs_path(rel: str | None) -> Path | None:
     """解析(可能是客户端传入的)相对路径;不合法返回 None,调用方据此拒绝。"""
-    return media_root() / rel if is_safe_rel(rel) else None
+    return _root_for_rel(rel) / rel if is_safe_rel(rel) else None
 
 
 def write_rel(rel: str, chunks: Iterable[bytes], *, max_bytes: int | None = None) -> str:
     """按完整相对路径原子写入本地媒体目录(先写 .tmp 再 rename),返回 rel。"""
-    final = media_root() / rel
+    if not is_safe_rel(rel):
+        raise ValueError("非法媒体相对路径")
+    final = _root_for_rel(rel) / rel
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.with_name(final.name + ".tmp")
     size = 0
