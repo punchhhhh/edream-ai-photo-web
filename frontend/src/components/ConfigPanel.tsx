@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react'
-import { createConfig, deleteConfig, listConfigs, testConfig, updateConfig, type ConfigForm, type ConfigTestResult } from '../api'
+import {
+  createConfig,
+  createNewApiDefaultConfig,
+  deleteConfig,
+  listConfigs,
+  testConfig,
+  updateConfig,
+  type ConfigForm,
+  type ConfigTestResult,
+} from '../api'
 import type { ModelConfig } from '../types'
 
 interface Props {
@@ -28,6 +37,9 @@ export default function ConfigPanel({ onClose, onSaved }: Props) {
   const [error, setError] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<ConfigTestResult | null>(null)
+  // 一键 new-api 默认配置:请求中与成功提示
+  const [fetchingDefault, setFetchingDefault] = useState(false)
+  const [notice, setNotice] = useState('')
 
   // 正在编辑的配置的密钥掩码,提示原密钥仍保留在后端
   const currentMasked = editingId ? (configs.find((c) => c.id === editingId)?.api_key_masked ?? '') : ''
@@ -47,6 +59,7 @@ export default function ConfigPanel({ onClose, onSaved }: Props) {
     setEditingId(0) // 0 = 新建
     setForm(EMPTY_FORM)
     setError('')
+    setNotice('')
     setTestResult(null)
   }
 
@@ -64,7 +77,27 @@ export default function ConfigPanel({ onClose, onSaved }: Props) {
       is_default: c.is_default,
     })
     setError('')
+    setNotice('')
     setTestResult(null)
+  }
+
+  const useNewApiDefault = async () => {
+    setFetchingDefault(true)
+    setError('')
+    setNotice('')
+    try {
+      // 密钥由后端按当前登录用户到 new-api 获取并直接落库,前端拿不到明文
+      const created = await createNewApiDefaultConfig()
+      const list = await listConfigs()
+      setConfigs(list)
+      onSaved(list)
+      startEdit(created)
+      setNotice(`已获取「${created.name}」的网关密钥并设为默认,模型已按平台默认预填,可修改后保存;用「测试连接」可从网关模型列表中重新挑选。`)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setFetchingDefault(false)
+    }
   }
 
   const runTest = async () => {
@@ -167,6 +200,7 @@ export default function ConfigPanel({ onClose, onSaved }: Props) {
         </p>
 
         {error && <div className="alert error">{error}</div>}
+        {notice && <div className="alert info">{notice}</div>}
 
         <div className="config-list">
           {configs.length === 0 && <div className="empty">还没有配置,点击下方按钮新增一个</div>}
@@ -245,9 +279,19 @@ export default function ConfigPanel({ onClose, onSaved }: Props) {
             </div>
           </div>
         ) : (
-          <button className="btn primary full" onClick={startCreate}>
-            + 新增配置
-          </button>
+          <div className="config-create-actions">
+            <button className="btn primary full" onClick={startCreate}>
+              + 新增配置
+            </button>
+            <button
+              className="btn full"
+              disabled={fetchingDefault}
+              title="按当前登录账号到 new-api 网关取 system 密钥,自动生成默认配置"
+              onClick={useNewApiDefault}
+            >
+              {fetchingDefault ? '正在获取默认配置…' : '⚡ 一键使用 new-api 默认配置'}
+            </button>
+          </div>
         )}
       </div>
     </div>

@@ -1491,3 +1491,22 @@ a {
     flex-direction: column;
   }
 }
+
+/* ---- 视频共创 ---- */
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-direction: row !important;
+}
+.checkbox-line input[type="checkbox"] {
+  width: auto;
+}
+.cocreation-idea {
+  display: inline-block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}

@@ -1,5 +1,6 @@
 import type {
   AuthUser,
+  CoCreationStatus,
   Creation,
   EnterpriseBusinessContext,
   ModelConfig,
@@ -67,6 +68,10 @@ export const updateConfig = (id: number, payload: ConfigForm) =>
 
 export const deleteConfig = (id: number) => request<{ ok: boolean }>(`/api/configs/${id}`, { method: 'DELETE' })
 
+// 一键 new-api 默认配置:后端按当前登录用户的 Casdoor 标识取网关 system 密钥并直接落库,密钥不回传前端
+export const createNewApiDefaultConfig = () =>
+  request<ModelConfig>('/api/configs/newapi-default', { method: 'POST' })
+
 export interface ConfigTestResult {
   ok: boolean
   models: string[]
@@ -115,6 +120,25 @@ export const deleteCreation = (id: number) => request<{ ok: boolean }>(`/api/cre
 
 // ---- 风格预设 ----
 export const listStyles = () => request<StylePreset[]>('/api/styles')
+
+// ---- 企业共创视频 ----
+export const getCocreationStatus = () => request<CoCreationStatus>('/api/cocreation/status')
+
+export const expandCocreation = (templateId: number, text: string) =>
+  request<{ expanded_prompt: string }>('/api/cocreation/expand', {
+    method: 'POST',
+    body: JSON.stringify({ template_id: templateId, text }),
+  })
+
+export const createCocreationVideo = (payload: {
+  template_id: number
+  text: string
+  expanded_prompt?: string
+}) =>
+  request<Creation>('/api/cocreation/videos', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 
 // ---- 多图 Vlog ----
 export const uploadVlogImages = (files: File[]) => {

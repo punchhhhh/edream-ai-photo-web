@@ -192,3 +192,72 @@ class InternalMaterialOut(BaseModel):
     size_bytes: int
     checksum_sha256: str
     content_url: str | None
+
+
+# ---------------------------------------------------------------- 企业共创视频
+
+class VideoTemplateBaseIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=500)
+    prompt: str = Field(default="", max_length=4000)
+    chat_model: str = Field(default="", max_length=200)
+    video_model: str = Field(min_length=1, max_length=200)
+    video_provider: Literal["video_generations", "openai_videos"] = "video_generations"
+    duration: int = Field(default=5, ge=1, le=60)
+    negative_prompt: str = Field(default="", max_length=2000)
+    is_active: bool = True
+    sort_order: int = Field(default=0, ge=0, le=9999)
+
+
+class VideoTemplateCreateIn(VideoTemplateBaseIn):
+    pass
+
+
+class VideoTemplateUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+    prompt: str | None = Field(default=None, max_length=4000)
+    chat_model: str | None = Field(default=None, max_length=200)
+    video_model: str | None = Field(default=None, min_length=1, max_length=200)
+    video_provider: Literal["video_generations", "openai_videos"] | None = None
+    duration: int | None = Field(default=None, ge=1, le=60)
+    negative_prompt: str | None = Field(default=None, max_length=2000)
+    is_active: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0, le=9999)
+
+
+class VideoTemplateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    enterprise_id: int
+    name: str
+    description: str
+    prompt: str
+    chat_model: str
+    video_model: str
+    video_provider: str
+    duration: int
+    negative_prompt: str
+    is_active: bool
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CoCreationVideoOut(BaseModel):
+    """企业主/管理员视角的成员共创视频。"""
+
+    id: int
+    creator_id: int
+    creator_sub: str
+    creator_name: str | None
+    template_id: int | None
+    template_name: str
+    input_text: str
+    video_model: str
+    duration: int
+    status: str
+    error: str | None
+    video_url: str | None
+    created_at: datetime

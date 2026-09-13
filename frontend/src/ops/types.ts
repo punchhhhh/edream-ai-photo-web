@@ -122,3 +122,51 @@ export interface PlatformAdmin {
   email: string | null;
   source: "database" | "environment";
 }
+
+// ---- 企业共创视频 ----
+
+export interface VideoTemplate {
+  id: number;
+  enterprise_id: number;
+  name: string;
+  description: string;
+  prompt: string;
+  chat_model: string;
+  video_model: string;
+  video_provider: string;
+  duration: number;
+  negative_prompt: string;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VideoTemplateForm {
+  name: string;
+  description: string;
+  prompt: string;
+  chat_model: string;
+  video_model: string;
+  video_provider: string;
+  duration: number;
+  negative_prompt: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface CoCreationVideo {
+  id: number;
+  creator_id: number;
+  creator_sub: string;
+  creator_name: string | null;
+  template_id: number | null;
+  template_name: string;
+  input_text: string;
+  video_model: string;
+  duration: number;
+  status: string;
+  error: string | null;
+  video_url: string | null;
+  created_at: string;
+}

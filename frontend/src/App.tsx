@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ConfigPanel from './components/ConfigPanel'
+import CoCreationPanel from './components/CoCreationPanel'
 import HistoryPanel from './components/HistoryPanel'
 import VlogPanel from './components/VlogPanel'
 import {
@@ -8,6 +9,7 @@ import {
   fetchMe,
   generateImage,
   getEnterpriseContext,
+  getCocreationStatus,
   getCreation,
   listConfigs,
   listCreations,
@@ -16,7 +18,16 @@ import {
   resolveEnterpriseEntry,
   uploadImage,
 } from './api'
-import { STATUS_TEXT, type AuthUser, type Creation, type EnterpriseBusinessContext, type ImageSource, type ModelConfig, type StylePreset } from './types'
+import {
+  STATUS_TEXT,
+  type AuthUser,
+  type CoCreationStatus,
+  type Creation,
+  type EnterpriseBusinessContext,
+  type ImageSource,
+  type ModelConfig,
+  type StylePreset,
+} from './types'
 import { downloadName, notify, requestNotifyPermission } from './utils'
 import { beginLogin, completeLogout, isExplicitlyLoggedOut } from './authNavigation'
 
@@ -31,7 +42,7 @@ const IMAGE_SIZES = [
 const DURATIONS = [4, 5, 10]
 
 export default function App() {
-  const [workspace, setWorkspace] = useState<'creative' | 'vlog'>('creative')
+  const [workspace, setWorkspace] = useState<'creative' | 'vlog' | 'cocreation'>('creative')
   const [me, setMe] = useState<AuthUser | null>(null)
   const [enterpriseContext, setEnterpriseContext] = useState<EnterpriseBusinessContext | null>(null)
   const [loggedOut, setLoggedOut] = useState(isExplicitlyLoggedOut)
@@ -41,6 +52,8 @@ export default function App() {
   const [configOpen, setConfigOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [vlogEditCreation, setVlogEditCreation] = useState<Creation | null>(null)
+  // 企业共创:有企业绑定且企业配置了模版时才展示该 tab
+  const [coStatus, setCoStatus] = useState<CoCreationStatus | null>(null)
 
   // 步骤状态
   const [text, setText] = useState('')
@@ -117,6 +130,8 @@ export default function App() {
     refreshConfigs().catch((e) => setError((e as Error).message))
     // 风格预设从后端拉取(启动时幂等播种,可改库自定义)
     listStyles().then(setStyles).catch(() => {})
+    // 共创 tab 显隐由后端判定(企业绑定 + 模版配置 + 服务开关)
+    getCocreationStatus().then(setCoStatus).catch(() => setCoStatus({ available: false, reason: '', templates: [], used: 0, limit: 0 }))
   }, [refreshConfigs, loggedOut])
 
   useEffect(() => {
@@ -367,7 +382,13 @@ export default function App() {
           <span className="logo">✦</span>
           <div>
             <h1>eDream AI 视频创作台</h1>
-            <p>{workspace === 'creative' ? '一句话创意 → AI 拓展 → 图片 → 视频' : '图片场景 → 动态分镜 → Vlog'}</p>
+            <p>
+              {workspace === 'creative'
+                ? '一句话创意 → AI 拓展 → 图片 → 视频'
+                : workspace === 'vlog'
+                  ? '图片场景 → 动态分镜 → Vlog'
+                  : '企业模版 · 用企业网关额度共创视频'}
+            </p>
           </div>
         </div>
         <div className="topbar-actions">
@@ -430,6 +451,16 @@ export default function App() {
         >
           Vlog
         </button>
+        {coStatus?.available && (
+          <button
+            type="button"
+            className={workspace === 'cocreation' ? 'active' : ''}
+            aria-current={workspace === 'cocreation' ? 'page' : undefined}
+            onClick={() => setWorkspace('cocreation')}
+          >
+            共创
+          </button>
+        )}
       </nav>
 
       {workspace === 'creative' && error && (
@@ -620,7 +651,10 @@ export default function App() {
             )}
           </div>,
         )}
-      </main> : <VlogPanel
+      </main> : workspace === 'cocreation' && coStatus?.available ? <CoCreationPanel
+        status={coStatus}
+        onStatusChange={setCoStatus}
+      /> : <VlogPanel
         config={config}
         styles={styles}
         editCreation={vlogEditCreation}

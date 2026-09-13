@@ -240,6 +240,10 @@ class CreationOut(BaseModel):
     chat_model: str
     image_model: str
     video_model: str
+    # 企业共创任务:enterprise_id 非空表示基于企业模版生成
+    enterprise_id: int | None = None
+    template_id: int | None = None
+    template_name: str = ""
     # 成片若来自 Vlog 项目，历史列表可用这个关联直接打开可编辑副本。
     vlog_project_id: int | None = None
     created_at: datetime
@@ -267,3 +271,42 @@ class ConfigTestOut(BaseModel):
 class HealthOut(BaseModel):
     ok: bool
     media_dir: str
+
+
+# ---------------------------------------------------------------- 企业共创视频
+
+class CoCreationTemplateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    description: str
+    # 模版固定的画面要求,成员端只读展示
+    prompt: str
+    chat_model: str
+    video_model: str
+    video_provider: str
+    duration: int
+    is_active: bool
+    sort_order: int
+
+
+class CoCreationStatusOut(BaseModel):
+    """主应用共创 tab 的显隐与渲染依据:available=false 时 reason 说明原因。"""
+
+    available: bool
+    reason: str = ""
+    templates: list[CoCreationTemplateOut] = []
+    used: int = 0
+    limit: int = 0
+
+
+class CoCreationExpandIn(BaseModel):
+    template_id: int
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class CoCreationVideoCreateIn(BaseModel):
+    template_id: int
+    text: str = Field(min_length=1, max_length=2000)
+    expanded_prompt: str = Field(default="", max_length=4000)

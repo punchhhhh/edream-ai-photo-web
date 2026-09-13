@@ -331,6 +331,48 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class EnterpriseVideoTemplate(Base):
+    """企业共创视频模版:企业主/管理员配置,成员基于模版用企业主的网关密钥生成视频。
+
+    网关调用参数(地址/密钥)不在模版里保存:生成时优先用企业主的默认模型配置,
+    没有时按企业 Owner 的 Casdoor 标识从 new-api 内部接口实时取 system 密钥,
+    模版只保存模型与提示词约束。
+    """
+
+    __tablename__ = "enterprise_video_templates"
+    __table_args__ = (
+        Index("ix_enterprise_video_templates_enterprise_active", "enterprise_id", "is_active"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    # 给成员看的模版说明
+    description: Mapped[str] = mapped_column(String(500), default="")
+    # 模版固定的画面要求,生成时拼在成员创意前面
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    # 可选:提供 AI 拓展能力(用企业主的网关密钥调用)
+    chat_model: Mapped[str] = mapped_column(String(200), default="")
+    video_model: Mapped[str] = mapped_column(String(200), default="")
+    # video_generations = new-api 任务式接口;openai_videos = Sora 风格 /v1/videos
+    video_provider: Mapped[str] = mapped_column(String(50), default="video_generations")
+    duration: Mapped[int] = mapped_column(Integer, default=5)
+    negative_prompt: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Creation(Base):
     """一次视频生成任务的完整记录。"""
 
@@ -375,6 +417,16 @@ class Creation(Base):
     chat_model: Mapped[str] = mapped_column(String(200), default="")
     image_model: Mapped[str] = mapped_column(String(200), default="")
     video_model: Mapped[str] = mapped_column(String(200), default="")
+
+    # 企业共创任务:enterprise_id 非空表示基于企业模版、用企业主网关密钥生成
+    enterprise_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enterprise_video_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    # 模版名快照,模版删除后历史记录仍可展示
+    template_name: Mapped[str] = mapped_column(String(100), default="")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

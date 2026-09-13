@@ -18,7 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from .. import media, storage
 from ..auth import aware
 from ..database import SessionLocal
-from ..models import Creation, ModelConfig, StylePreset
+from ..models import Creation, EnterpriseVideoTemplate, ModelConfig, StylePreset
 from ..settings import settings
 from .ai_client import AICallError, AIClient
 
@@ -134,10 +134,29 @@ def _run(creation_id: int, resume: bool) -> None:
             _finish(session, creation, "failed")
 
 
-def _generate_video(session, creation: Creation, *, resume: bool = False) -> None:
+def _resolve_gateway(session, creation: Creation) -> tuple[str, str, str]:
+    """解析生成视频所需的网关参数,返回 (base_url, api_key, provider)。
+
+    共创任务(有 template_id)用企业主的默认模型配置(无默认配置时实时取
+    其 new-api system 密钥);普通任务用用户自己的模型配置。
+    """
+    if creation.template_id:
+        from .cocreation import enterprise_gateway_credentials
+
+        template = session.get(EnterpriseVideoTemplate, creation.template_id)
+        if template is None or template.enterprise_id != creation.enterprise_id:
+            raise AICallError("企业视频模版不存在或已被删除,无法继续生成")
+        base_url, api_key = enterprise_gateway_credentials(session, template.enterprise_id)
+        return base_url, api_key, template.video_provider or "video_generations"
+
     config = session.get(ModelConfig, creation.config_id) if creation.config_id else None
     if config is None:
         raise AICallError("模型配置不存在或已被删除,请重新选择配置")
+    return config.base_url, config.api_key, config.video_provider or "video_generations"
+
+
+def _generate_video(session, creation: Creation, *, resume: bool = False) -> None:
+    base_url, api_key, provider = _resolve_gateway(session, creation)
 
     image_bytes = None
     image_mime = None
@@ -155,9 +174,14 @@ def _generate_video(session, creation: Creation, *, resume: bool = False) -> Non
     creation.error = None
     session.commit()
 
-    # 风格预设的负向提示词(正向画面语言已随拓展文本固化在 expanded_prompt 里)
+    # 风格预设的负向提示词(正向画面语言已随拓展文本固化在 expanded_prompt 里);
+    # 共创任务用模版配置的负向提示词
     negative_prompt = ""
-    if creation.style:
+    if creation.template_id:
+        template = session.get(EnterpriseVideoTemplate, creation.template_id)
+        if template is not None:
+            negative_prompt = template.negative_prompt
+    elif creation.style:
         preset = session.scalar(select(StylePreset).where(StylePreset.name == creation.style))
         if preset is not None:
             negative_prompt = preset.negative_prompt
@@ -181,7 +205,7 @@ def _generate_video(session, creation: Creation, *, resume: bool = False) -> Non
             session.rollback()
             logger.warning("heartbeat commit failed (creation %s)", creation.id, exc_info=True)
 
-    with AIClient(config.base_url, config.api_key, provider=config.video_provider) as client:
+    with AIClient(base_url, api_key, provider=provider) as client:
         result = client.run_video(
             creation.video_model,
             creation.expanded_prompt or creation.input_text,

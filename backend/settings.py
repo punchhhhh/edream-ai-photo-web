@@ -75,6 +75,19 @@ class Settings(BaseSettings):
     # 仅主业务服务端使用，逗号分隔；不要暴露给浏览器
     internal_service_tokens: str = ""
 
+    # ---- 企业共创视频 ----
+    # 共创视频统一走 new-api 网关:生成时按企业 Owner 的 Casdoor 标识调 new-api 内部接口
+    # 取其 system 密钥(X-Key-Id/X-Key 鉴权)。三项任一留空,共创功能整体关闭。
+    new_api_base_url: str = ""
+    new_api_internal_key_id: str = ""
+    new_api_internal_key: str = ""
+    # 一键 new-api 默认配置的预填模型(仅填充为空的字段,不覆盖用户已选)
+    new_api_default_chat_model: str = "deepseek-v4-flash"
+    new_api_default_image_model: str = "gpt-image-2"
+    new_api_default_video_model: str = "wan3_720p"
+    # 每个成员可保留的共创视频上限(非失败状态的任务数)
+    cocreation_max_videos_per_user: int = 3
+
     # 跨域来源,逗号分隔;生产部署改为实际的前端域名
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173"
 

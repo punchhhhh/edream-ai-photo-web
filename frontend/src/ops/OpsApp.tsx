@@ -9,6 +9,7 @@ import {
   Boxes,
   Building2,
   Check,
+  Clapperboard,
   Copy,
   Download,
   ExternalLink,
@@ -47,6 +48,7 @@ import type {
   Quota,
 } from "./types";
 import MaterialsView from "./MaterialsView";
+import CoCreationView from "./CoCreationView";
 import {
   beginLogin,
   completeLogout,
@@ -828,7 +830,7 @@ export default function OpsApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<
-    "materials" | "entry" | "enterprise" | "admin"
+    "materials" | "entry" | "enterprise" | "cocreation" | "admin"
   >("materials");
   const reload = useCallback(async () => {
     if (loggedOut) {
@@ -938,6 +940,13 @@ export default function OpsApp() {
                   素材管理
                 </button>
                 <button
+                  className={visibleTab === "cocreation" ? "active" : ""}
+                  onClick={() => setTab("cocreation")}
+                >
+                  <Clapperboard size={17} />
+                  视频共创
+                </button>
+                <button
                   className={visibleTab === "entry" ? "active" : ""}
                   onClick={() => setTab("entry")}
                 >
@@ -973,6 +982,9 @@ export default function OpsApp() {
           <main className="ops-content">
             {visibleTab === "materials" && enterpriseReady && (
               <MaterialsView profile={profile} />
+            )}
+            {visibleTab === "cocreation" && enterpriseReady && (
+              <CoCreationView profile={profile} />
             )}
             {visibleTab === "entry" && enterpriseReady && (
               <EnterpriseEntryView />

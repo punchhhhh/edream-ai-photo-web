@@ -27,6 +27,7 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     _ensure_vlog_transition_schema()
     _ensure_enterprise_schema()
+    _ensure_cocreation_schema()
 
 
 def _ensure_vlog_transition_schema() -> None:
@@ -207,3 +208,23 @@ def _ensure_enterprise_schema() -> None:
                     """
                 )
             )
+
+
+def _ensure_cocreation_schema() -> None:
+    """补齐企业共创视频字段:creations 表加企业/模版标记列。"""
+    inspector = inspect(engine)
+    if "creations" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("creations")}
+    statements: list[str] = []
+    if "enterprise_id" not in columns:
+        statements.append("ALTER TABLE creations ADD COLUMN enterprise_id INTEGER")
+    if "template_id" not in columns:
+        statements.append("ALTER TABLE creations ADD COLUMN template_id INTEGER")
+    if "template_name" not in columns:
+        statements.append(
+            "ALTER TABLE creations ADD COLUMN template_name VARCHAR(100) NOT NULL DEFAULT ''"
+        )
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
