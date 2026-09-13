@@ -16,6 +16,7 @@ import {
 } from './api'
 import { STATUS_TEXT, type AuthUser, type Creation, type ImageSource, type ModelConfig, type StylePreset } from './types'
 import { downloadName, notify, requestNotifyPermission } from './utils'
+import { beginLogin, completeLogout, isExplicitlyLoggedOut } from './authNavigation'
 
 const CONFIG_KEY = 'edream_config_id'
 
@@ -30,6 +31,7 @@ const DURATIONS = [4, 5, 10]
 export default function App() {
   const [workspace, setWorkspace] = useState<'creative' | 'vlog'>('creative')
   const [me, setMe] = useState<AuthUser | null>(null)
+  const [loggedOut, setLoggedOut] = useState(isExplicitlyLoggedOut)
   const [configs, setConfigs] = useState<ModelConfig[]>([])
   const [styles, setStyles] = useState<StylePreset[]>([])
   const [configId, setConfigId] = useState<number | null>(null)
@@ -57,12 +59,13 @@ export default function App() {
 
   // 未登录先跳 OAuth;fetchMe 的 401 不走 api.ts 的自动跳转(auth 路径除外),这里显式处理
   useEffect(() => {
+    if (loggedOut) return
     fetchMe()
       .then(setMe)
       .catch(() => {
         window.location.href = '/api/auth/login'
       })
-  }, [])
+  }, [loggedOut])
 
   const doLogout = async () => {
     let ssoLogoutUrl: string | null = null
@@ -71,8 +74,9 @@ export default function App() {
     } catch {
       /* 本地会话可能已失效,直接回登录即可 */
     }
-    // 有 SSO 登出地址时先去 Casdoor 注销,登出后回到站点再走正常登录;否则回登录入口
-    window.location.href = ssoLogoutUrl ?? '/api/auth/login'
+    setLoggedOut(true)
+    setMe(null)
+    completeLogout(ssoLogoutUrl)
   }
 
   const refreshConfigs = useCallback(async () => {
@@ -87,10 +91,11 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (loggedOut) return
     refreshConfigs().catch((e) => setError((e as Error).message))
     // 风格预设从后端拉取(启动时幂等播种,可改库自定义)
     listStyles().then(setStyles).catch(() => {})
-  }, [refreshConfigs])
+  }, [refreshConfigs, loggedOut])
 
   useEffect(() => {
     if (configId) localStorage.setItem(CONFIG_KEY, String(configId))
@@ -99,6 +104,7 @@ export default function App() {
   // 刷新页面后,恢复仍在生成中的任务进度与表单内容
   const restoredRef = useRef(false)
   useEffect(() => {
+    if (loggedOut) return
     if (restoredRef.current) return
     restoredRef.current = true
     listCreations(20)
@@ -110,7 +116,7 @@ export default function App() {
       })
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [loggedOut])
 
   // 生成中轮询任务状态;完成/失败时发系统通知
   useEffect(() => {
@@ -305,6 +311,24 @@ export default function App() {
       {children}
     </section>
   )
+
+  if (loggedOut) {
+    return (
+      <div className="app">
+        <header className="topbar">
+          <div className="brand">
+            <span className="logo">✦</span>
+            <div>
+              <h1>eDream AI 视频创作台</h1>
+              <p>文字生图 · 图片生视频</p>
+            </div>
+          </div>
+          <button className="btn" onClick={() => beginLogin('/')}>重新登录</button>
+        </header>
+        <div className="callout">已退出登录</div>
+      </div>
+    )
+  }
 
   if (!me) {
     return (

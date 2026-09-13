@@ -9,6 +9,7 @@ import type {
   Purpose,
   Quota,
 } from "./types";
+import { isExplicitlyLoggedOut } from "../authNavigation";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
@@ -19,7 +20,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers,
     credentials: "include",
   });
-  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+  if (
+    response.status === 401 &&
+    !path.startsWith("/api/auth/") &&
+    !isExplicitlyLoggedOut()
+  ) {
     window.location.href = `/api/auth/login?next=${encodeURIComponent("/ops")}`;
     throw new Error("登录已失效，正在重新登录");
   }
@@ -37,6 +42,10 @@ const json = (method: string, payload: unknown): RequestInit => ({
 });
 
 export const fetchOpsProfile = () => request<OpsProfile>("/api/ops/v1/profile");
+export const logoutOps = () =>
+  request<{ ok: boolean; sso_logout_url: string | null }>("/api/auth/logout", {
+    method: "POST",
+  });
 export const applyEnterprise = (payload: EnterpriseForm) =>
   request<OpsProfile>("/api/ops/v1/enterprise", json("POST", payload));
 export const updateEnterprise = (payload: EnterpriseForm) =>

@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   Boxes,
   Building2,
+  LogIn,
   LogOut,
   ShieldCheck,
   Users,
@@ -25,6 +26,7 @@ import {
   listEnterprises,
   listMembers,
   listPlatformAdmins,
+  logoutOps,
   reviewEnterprise,
   updateEnterprise,
   updateEnterpriseQuota,
@@ -40,6 +42,11 @@ import type {
   Quota,
 } from "./types";
 import MaterialsView from "./MaterialsView";
+import {
+  beginLogin,
+  completeLogout,
+  isExplicitlyLoggedOut,
+} from "../authNavigation";
 import "./ops.css";
 const ROLE_LABEL: Record<MemberRole, string> = {
   owner: "Owner",
@@ -807,12 +814,17 @@ function AdminView() {
 
 export default function OpsApp() {
   const [profile, setProfile] = useState<OpsProfile | null>(null);
+  const [loggedOut, setLoggedOut] = useState(isExplicitlyLoggedOut);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<
     "materials" | "members" | "enterprise" | "admin"
   >("materials");
   const reload = useCallback(async () => {
+    if (loggedOut) {
+      setLoading(false);
+      return;
+    }
     try {
       setProfile(await fetchOpsProfile());
       setError("");
@@ -821,7 +833,7 @@ export default function OpsApp() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loggedOut]);
   useEffect(() => {
     document.title = "eDream Ops";
   }, []);
@@ -835,6 +847,31 @@ export default function OpsApp() {
     () => (!enterpriseReady && profile?.is_platform_admin ? "admin" : tab),
     [enterpriseReady, profile, tab],
   );
+  if (loggedOut)
+    return (
+      <div className="ops-shell">
+        <header className="ops-header">
+          <a className="ops-brand" href="/ops">
+            <span>eD</span>
+            <div>
+              <strong>eDream 企业中心</strong>
+              <small>素材与账号管理</small>
+            </div>
+          </a>
+        </header>
+        <main className="ops-centered compact">
+          <div className="ops-page-title">
+            <p>账号状态</p>
+            <h1>已退出登录</h1>
+            <span>当前页面已保留，重新登录后可继续使用。</span>
+          </div>
+          <button className="primary-button" onClick={() => beginLogin("/ops")}>
+            <LogIn size={17} />
+            重新登录
+          </button>
+        </main>
+      </div>
+    );
   if (loading) return <div className="ops-loading">正在加载运营平台...</div>;
   if (!profile)
     return (
@@ -862,11 +899,15 @@ export default function OpsApp() {
             aria-label="退出登录"
             title="退出登录"
             onClick={async () => {
-              const response = await fetch("/api/auth/logout", {
-                method: "POST",
-              });
-              const data = await response.json();
-              window.location.href = data.sso_logout_url || "/";
+              let ssoLogoutUrl: string | null = null;
+              try {
+                ssoLogoutUrl = (await logoutOps()).sso_logout_url;
+              } catch {
+                /* The local session may already be expired. */
+              }
+              setLoggedOut(true);
+              setProfile(null);
+              completeLogout(ssoLogoutUrl);
             }}
           >
             <LogOut size={17} />

@@ -6,6 +6,7 @@ import type {
   VlogProject,
   VlogUploadPlan,
 } from './types'
+import { isExplicitlyLoggedOut } from './authNavigation'
 
 // 配置表单里用户本次输入的内容;编辑已存配置时 api_key 留空表示保留原密钥
 export type ConfigForm = Omit<ModelConfig, 'id' | 'api_key_masked' | 'created_at' | 'updated_at'> & {
@@ -19,7 +20,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: isJsonBody ? { 'Content-Type': 'application/json', ...init?.headers } : init?.headers,
   })
   if (!res.ok) {
-    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+    if (res.status === 401 && !path.startsWith('/api/auth/') && !isExplicitlyLoggedOut()) {
       // 会话失效,跳转 OAuth 登录;next 让登录后回到当前页
       window.location.href = `/api/auth/login?next=${encodeURIComponent(window.location.pathname)}`
       throw new Error('登录已失效,正在跳转登录…')
@@ -40,7 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 // ---- 登录 ----
 export const fetchMe = () => request<AuthUser>('/api/auth/me')
 
-// sso_logout_url:jwt 模式下先去 Casdoor 注销 SSO 会话,否则退出后会被自动登回;dev 模式为 null
+// sso_logout_url:jwt 模式下由页面后台清理 Casdoor 当前设备会话;dev 模式为 null
 export const logout = () =>
   request<{ ok: boolean; sso_logout_url: string | null }>('/api/auth/logout', { method: 'POST' })
 

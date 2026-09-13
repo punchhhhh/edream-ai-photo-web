@@ -5,7 +5,9 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from backend.auth import principal_from_claims
+from backend.routers import auth as auth_routes
 from backend.schemas import mask_secret
+from backend.settings import settings
 
 CONFIG_PAYLOAD = {
     "name": "测试网关",
@@ -93,6 +95,28 @@ def test_dev_login_sets_session_cookie(client: TestClient) -> None:
     me = client.get("/api/auth/me")
     assert me.status_code == 200
     assert me.json()["oauth_sub"] == "dev-user"
+
+
+def test_logout_revokes_local_session_without_navigation(client: TestClient) -> None:
+    client.get("/api/auth/login", follow_redirects=False)
+    response = client.post("/api/auth/logout")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "sso_logout_url": None}
+    assert client.get("/api/auth/me").status_code == 401
+
+
+def test_casdoor_logout_uses_supported_background_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "auth_mode", "jwt")
+    monkeypatch.setattr(settings, "oauth_client_id", "client-id")
+    monkeypatch.setattr(
+        settings,
+        "oauth_authorize_url",
+        "https://auth.example.test/login/oauth/authorize",
+    )
+    assert (
+        auth_routes._sso_logout_url()
+        == "https://auth.example.test/api/sso-logout?logoutAll=false"
+    )
 
 
 def test_config_response_never_contains_api_key(client: TestClient) -> None:

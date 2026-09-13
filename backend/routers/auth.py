@@ -11,8 +11,8 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from ..auth import (
-    Principal,
     SESSION_COOKIE,
+    Principal,
     aware,
     issue_session,
     principal_from_userinfo,
@@ -210,13 +210,10 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 
 
 def _sso_logout_url() -> str | None:
-    """jwt 模式下返回 Casdoor 的登出地址:连 IdP 的 SSO 会话一起注销,否则退出后会被自动登回。"""
+    """返回 Casdoor 当前设备会话注销地址，由前端后台调用以保持当前页面。"""
     if settings.auth_mode != "jwt" or not settings.oauth_client_id:
         return None
     base = urlparse(settings.oauth_authorize_url)._replace(path="", query="", fragment="").geturl()
-    app_origin = (
-        urlparse(settings.oauth_redirect_uri or "")._replace(path="", query="", fragment="").geturl()
-    )
-    if not base.startswith("http") or not app_origin.startswith("http"):
+    if not base.startswith("http"):
         return None
-    return f"{base}/logout?{urlencode({'client_id': settings.oauth_client_id, 'redirect_uri': app_origin})}"
+    return f"{base}/api/sso-logout?logoutAll=false"
