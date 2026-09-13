@@ -41,6 +41,8 @@ frontend/                前端(Vite + React + TS)
 media/                   产物目录(images / uploads / videos),经 /api/media 静态服务
 tests/                   pytest(认证/隔离/并发限制/安全加固/重启恢复)
 DEPLOY.md                生产部署手册(studio.ymmjc.com:发布/回滚/COS 迁移/运维)
+OPS.md                   企业素材运营平台设计与验收说明
+docs/enterprise-material-integration.md  主业务接入企业素材指南
 main.py                  uvicorn 启动入口
 ```
 

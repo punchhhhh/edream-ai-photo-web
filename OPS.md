@@ -61,9 +61,11 @@ backend/storage.py      local / COS 共用存储抽象
 | `POST /api/internal/v1/materials/search` | 按企业、用途、内容类型、标签查询 |
 | `POST /api/internal/v1/materials/batch-get` | 批量解析指定素材 |
 | `GET /api/internal/v1/enterprises/{id}/material-profile` | 按用途聚合企业完整素材上下文 |
-| `GET /api/internal/v1/materials/{id}/versions/{version}/content` | 读取固定文件版本 |
+| `GET /api/internal/v1/enterprises/{enterprise_id}/materials/{id}/versions/{version}/content` | 在企业边界内读取固定文件版本 |
 
 主业务必须从服务端业务记录取得 `enterprise_id`，不能信任浏览器提交的任意企业 ID。生成任务应保存返回的 `asset_id、version_id、version_no、checksum_sha256`，避免素材更新影响历史任务。
+
+完整请求示例、字段语义、生成任务落库建议和联调清单见 [主业务接入企业素材指南](docs/enterprise-material-integration.md)。
 
 ## 额度一致性
 

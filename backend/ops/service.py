@@ -259,7 +259,8 @@ def internal_material_out(
     content_url = None
     if version.storage_key:
         content_url = (
-            f"/api/internal/v1/materials/{asset.id}/versions/{version.version_no}/content"
+            f"/api/internal/v1/enterprises/{asset.enterprise_id}/materials/"
+            f"{asset.id}/versions/{version.version_no}/content"
         )
     return InternalMaterialOut(
         asset_id=asset.id,

@@ -128,17 +128,26 @@ def material_profile(
     return {"enterprise_id": enterprise.id, "materials": grouped}
 
 
-@router.get("/materials/{asset_id}/versions/{version_no}/content")
+@router.get(
+    "/enterprises/{enterprise_id}/materials/{asset_id}/versions/{version_no}/content"
+)
 def get_material_content(
+    enterprise_id: int,
     asset_id: int,
     version_no: int,
     db: Session = Depends(get_db),
     service_id: str = Depends(require_internal_service),
 ):
-    asset = db.get(EnterpriseAsset, asset_id)
-    if asset is None or asset.status != "active":
+    asset = db.scalar(
+        select(EnterpriseAsset).where(
+            EnterpriseAsset.id == asset_id,
+            EnterpriseAsset.enterprise_id == enterprise_id,
+            EnterpriseAsset.status == "active",
+        )
+    )
+    if asset is None:
         raise HTTPException(404, "素材不存在")
-    enterprise = db.get(Enterprise, asset.enterprise_id)
+    enterprise = db.get(Enterprise, enterprise_id)
     if enterprise is None or enterprise.status != "approved":
         raise HTTPException(404, "企业不可用")
     version = version_for_asset(db, asset, version_no)

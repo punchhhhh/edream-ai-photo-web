@@ -447,6 +447,38 @@ def test_internal_material_rpc_requires_service_token_and_honors_enterprise_stat
         assert result.json()[0]["asset_id"] == text["id"]
         assert result.json()[0]["text_content"] == "天然美味，我先来一口"
 
+        image = _upload_png(client, "owner-a").json()
+        image_result = client.post(
+            "/api/internal/v1/materials/search",
+            json={
+                "enterprise_id": enterprise_id,
+                "purposes": ["brand_product"],
+                "content_types": ["image"],
+            },
+            headers={"X-Internal-Token": "internal-test-token"},
+        ).json()[0]
+        expected_content_url = (
+            f"/api/internal/v1/enterprises/{enterprise_id}/materials/"
+            f"{image['id']}/versions/1/content"
+        )
+        assert image_result["content_url"] == expected_content_url
+        content = client.get(
+            expected_content_url,
+            headers={"X-Internal-Token": "internal-test-token"},
+        )
+        assert content.status_code == 200
+        assert content.content.startswith(b"\x89PNG")
+
+        other_enterprise_id = _apply_and_approve(client, "owner-b", "RPC-OTHER")
+        other_image = _upload_png(client, "owner-b", "other.png").json()
+        cross_tenant_content = client.get(
+            f"/api/internal/v1/enterprises/{enterprise_id}/materials/"
+            f"{other_image['id']}/versions/1/content",
+            headers={"X-Internal-Token": "internal-test-token"},
+        )
+        assert other_enterprise_id != enterprise_id
+        assert cross_tenant_content.status_code == 404
+
         suspended = client.patch(
             f"/api/ops/v1/admin/enterprises/{enterprise_id}/status",
             json={"status": "suspended", "reason": "测试停用"},
