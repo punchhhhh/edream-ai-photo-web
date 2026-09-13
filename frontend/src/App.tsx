@@ -74,8 +74,7 @@ export default function App() {
     if (!me) return
     const params = new URLSearchParams(window.location.search)
     const token = params.get('enterprise_entry')
-    const clearEntryParameter = () => {
-      if (!token) return
+    if (token) {
       params.delete('enterprise_entry')
       const query = params.toString()
       window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
@@ -87,7 +86,6 @@ export default function App() {
         setEnterpriseContext(null)
         setError(reason instanceof Error ? reason.message : '无法识别企业入口')
       })
-      .finally(clearEntryParameter)
   }, [me])
 
   const doLogout = async () => {
