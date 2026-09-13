@@ -11,7 +11,7 @@
 | 服务器 | 腾讯云广州 CVM,`ubuntu@134.175.68.24`(SSH 公钥免密) |
 | 部署目录 | `/opt/edream`(后端 + 前端 dist + `.venv` + `.env` + `media/`) |
 | 进程 | systemd 服务 `edream.service`:uvicorn 监听 `127.0.0.1:8000`,单进程 |
-| Web 入口 | nginx,站点配置 `/etc/nginx/sites-enabled/studio.ymmjc.com.conf`:托管 `frontend/dist` 静态资源(SPA) + `/api/` 反代 8000(读写超时 600s,`client_max_body_size 600m`) |
+| Web 入口 | nginx,站点配置 `/etc/nginx/sites-enabled/studio.ymmjc.com.conf`:托管 `frontend/dist` 静态资源(SPA) + `/api/` 反代 8000(读写超时 600s,`client_max_body_size 1100m`，覆盖 1 GB 批量上传及 multipart 开销) |
 | 数据库 | 本机 PostgreSQL 16,库 `edream_ai_photo`,连接串在服务器 `.env` |
 | 资产存储 | 腾讯云 COS `studio-1436584532`(ap-guangzhou,私有读写,前缀 `edream`,预签名链接访问) |
 
