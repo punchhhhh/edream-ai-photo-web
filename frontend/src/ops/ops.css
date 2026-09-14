@@ -1576,6 +1576,19 @@ a {
   color: #8a94a3;
 }
 
+/* 勾选框不吃 .ops-form input 的通栏文本框样式(width:100%/min-height/padding/border) */
+.asset-option input[type="checkbox"],
+.asset-option input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  flex: none;
+  accent-color: var(--ops-green, #164e42);
+}
+
 .template-cell {
   display: flex;
   align-items: center;
