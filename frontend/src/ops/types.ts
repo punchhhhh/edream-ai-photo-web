@@ -73,11 +73,39 @@ export interface EnterpriseEntry {
   enterprise_id: number;
   enterprise_name: string;
   active: boolean;
-  /** 链接访客是否自动加入企业(无需二次确认,即可使用共创等成员能力) */
-  auto_join: boolean;
+  auto_approve: boolean;
+  expires_at: string | null;
+  grant_ttl_hours: number;
+  video_limit: number;
+  terms_version: string;
+  privacy_version: string;
   entry_url: string | null;
   created_at: string | null;
   updated_at: string | null;
+}
+
+export interface EnterpriseConsumerGrant {
+  id: number;
+  enterprise_id: number;
+  enterprise_name: string;
+  entry_id: number;
+  user_id: number;
+  oauth_sub: string;
+  display_name: string | null;
+  email: string | null;
+  status: "pending" | "active" | "expired" | "exhausted" | "revoked" | "rejected";
+  approval_mode: "auto" | "manual";
+  expires_at: string | null;
+  video_limit: number;
+  video_used: number;
+  video_remaining: number;
+  terms_version: string;
+  privacy_version: string;
+  consented_at: string | null;
+  applied_at: string;
+  approved_at: string | null;
+  last_used_at: string | null;
+  decision_reason: string;
 }
 
 export interface AssetVersion {

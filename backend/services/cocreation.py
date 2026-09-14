@@ -14,6 +14,7 @@ from ..models import (
     Enterprise,
     EnterpriseAsset,
     EnterpriseAssetVersion,
+    EnterpriseConsumerGrant,
     EnterpriseMembership,
     EnterpriseTemplateAsset,
     EnterpriseVideoTemplate,
@@ -22,6 +23,7 @@ from ..models import (
 )
 from ..settings import settings
 from . import newapi_internal
+from . import enterprise_access
 from .ai_client import AICallError
 from .newapi_internal import NewApiInternalError
 
@@ -68,25 +70,15 @@ class TemplateBinding:
 @dataclass(frozen=True, slots=True)
 class CoCreationContext:
     enterprise: Enterprise
-    membership: EnterpriseMembership
+    grant: EnterpriseConsumerGrant
 
 
-def cocreation_context(db: Session, user_id: int) -> CoCreationContext | None:
-    """当前用户是否可参与共创:企业认证通过且成员关系启用。"""
-    membership = db.scalar(
-        select(EnterpriseMembership)
-        .where(
-            EnterpriseMembership.user_id == user_id,
-            EnterpriseMembership.status.in_(ACTIVE_MEMBERSHIP_STATUSES),
-        )
-        .order_by(EnterpriseMembership.id.desc())
-    )
-    if membership is None:
-        return None
-    enterprise = db.get(Enterprise, membership.enterprise_id)
-    if enterprise is None or enterprise.status != "approved":
-        return None
-    return CoCreationContext(enterprise=enterprise, membership=membership)
+def cocreation_context(
+    db: Session, user: User, grant_id: int | None
+) -> CoCreationContext:
+    """当前用户的企业共创身份只来自临时授权，不复用企业成员关系。"""
+    context = enterprise_access.require_grant(db, user, grant_id)
+    return CoCreationContext(enterprise=context.enterprise, grant=context.grant)
 
 
 def list_templates(

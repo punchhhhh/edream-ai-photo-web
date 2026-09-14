@@ -11,6 +11,39 @@ export interface EnterpriseBusinessContext {
   enterprise_name: string
 }
 
+export interface EnterpriseEntryPreview {
+  enterprise_id: number
+  enterprise_name: string
+  enterprise_description: string
+  approval_mode: 'auto' | 'manual'
+  grant_ttl_hours: number
+  video_limit: number
+  terms_version: string
+  privacy_version: string
+}
+
+export interface EnterpriseConsumerGrant {
+  id: number
+  enterprise_id: number
+  enterprise_name: string
+  entry_id: number
+  user_id: number
+  status: 'pending' | 'active' | 'expired' | 'exhausted' | 'revoked' | 'rejected'
+  approval_mode: 'auto' | 'manual'
+  expires_at: string | null
+  video_limit: number
+  video_used: number
+  video_remaining: number
+  terms_version: string
+  privacy_version: string
+  consented_at: string | null
+}
+
+export interface EnterpriseEntryContext {
+  preview: EnterpriseEntryPreview
+  grant: EnterpriseConsumerGrant | null
+}
+
 export interface ModelConfig {
   id: number
   name: string
@@ -75,6 +108,7 @@ export interface CoCreationTemplate {
   character_asset_count: number
   /** 模版封面地址(企业素材,需登录访问) */
   cover_url: string | null
+  can_expand: boolean
 }
 
 export interface CoCreationFirstFrame {
@@ -88,6 +122,9 @@ export interface CoCreationStatus {
   templates: CoCreationTemplate[]
   used: number
   limit: number
+  grant_id: number | null
+  enterprise_name: string
+  expires_at: string | null
 }
 
 export type ImageSource = 'none' | 'generate' | 'upload'

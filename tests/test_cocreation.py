@@ -54,6 +54,36 @@ def _create_template(client: TestClient, sub: str, name: str = "品牌宣传模�
     return resp.json()
 
 
+def _entry_token(client: TestClient, owner_sub: str) -> str:
+    from urllib.parse import parse_qs, urlparse
+
+    created = client.post(
+        "/api/ops/v1/enterprise-entry",
+        headers={**_headers(owner_sub), "Origin": "http://127.0.0.1:5173"},
+    )
+    assert created.status_code == 200, created.text
+    return parse_qs(urlparse(created.json()["entry_url"]).query)["enterprise_entry"][0]
+
+
+def _grant_id(client: TestClient, owner_sub: str, user_sub: str | None = None) -> int:
+    token = _entry_token(client, owner_sub)
+    preview = client.get(f"/api/enterprise-entry/preview?token={token}")
+    assert preview.status_code == 200, preview.text
+    applied = client.post(
+        "/api/enterprise-entry/apply",
+        json={
+            "token": token,
+            "accepted": True,
+            "terms_version": preview.json()["terms_version"],
+            "privacy_version": preview.json()["privacy_version"],
+        },
+        headers=_headers(user_sub or owner_sub),
+    )
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["status"] == "active"
+    return applied.json()["id"]
+
+
 @pytest.fixture()
 def gateway_ready(monkeypatch):
     """打开共创网关配置(仅本用例生效)。"""
@@ -112,19 +142,24 @@ def test_status_visibility_rules(gateway_ready, monkeypatch) -> None:
         assert status.status_code == 200
         body = status.json()
         assert body["available"] is False
-        assert "企业认证" in body["reason"]
+        assert "企业专属入口" in body["reason"]
 
         # 网关未配置时,即使企业已认证也不可用
         _apply_and_approve(client, "owner-y", "B")
         _create_template(client, "owner-y")
+        grant_id = _grant_id(client, "owner-y")
         monkeypatch.setattr(settings, "new_api_base_url", "")
-        status = client.get("/api/cocreation/status", headers=_headers("owner-y"))
+        status = client.get(
+            f"/api/cocreation/status?grant_id={grant_id}", headers=_headers("owner-y")
+        )
         assert status.json()["available"] is False
         assert "共创服务" in status.json()["reason"]
 
         # 配置齐全 + 有模版 → 可用,并返回模版与配额
         monkeypatch.setattr(settings, "new_api_base_url", "https://gateway.example.com")
-        status = client.get("/api/cocreation/status", headers=_headers("owner-y"))
+        status = client.get(
+            f"/api/cocreation/status?grant_id={grant_id}", headers=_headers("owner-y")
+        )
         body = status.json()
         assert body["available"] is True
         assert len(body["templates"]) == 1
@@ -143,8 +178,11 @@ def test_owner_can_see_and_use_cocreation_tab(gateway_ready, monkeypatch) -> Non
     with TestClient(create_app()) as client:
         enterprise_id = _apply_and_approve(client, "owner-tab", "T")
         _create_template(client, "owner-tab", name="Owner模版")
+        grant_id = _grant_id(client, "owner-tab")
 
-        status = client.get("/api/cocreation/status", headers=_headers("owner-tab"))
+        status = client.get(
+            f"/api/cocreation/status?grant_id={grant_id}", headers=_headers("owner-tab")
+        )
         assert status.status_code == 200
         body = status.json()
         assert body["available"] is True
@@ -153,7 +191,11 @@ def test_owner_can_see_and_use_cocreation_tab(gateway_ready, monkeypatch) -> Non
         # 不止能看到,Owner 也能直接提交共创视频(配额同样生效)
         created = client.post(
             "/api/cocreation/videos",
-            json={"template_id": body["templates"][0]["id"], "text": "Owner 的共创创意"},
+            json={
+                "grant_id": grant_id,
+                "template_id": body["templates"][0]["id"],
+                "text": "Owner 的共创创意",
+            },
             headers=_headers("owner-tab"),
         )
         assert created.status_code == 200, created.text
@@ -187,10 +229,15 @@ def test_create_video_quota_and_snapshot(gateway_ready, monkeypatch) -> None:
     with TestClient(create_app()) as client:
         _apply_and_approve(client, "owner-z", "C")
         template = _create_template(client, "owner-z", name="模版C")
+        grant_id = _grant_id(client, "owner-z")
 
         created = client.post(
             "/api/cocreation/videos",
-            json={"template_id": template["id"], "text": "一只橘猫在海边奔跑"},
+            json={
+                "grant_id": grant_id,
+                "template_id": template["id"],
+                "text": "一只橘猫在海边奔跑",
+            },
             headers=_headers("owner-z"),
         )
         assert created.status_code == 200, created.text
@@ -206,7 +253,7 @@ def test_create_video_quota_and_snapshot(gateway_ready, monkeypatch) -> None:
 
         # 状态接口的已用次数同步 +1(生成中也计入)
         status_body = client.get(
-            "/api/cocreation/status", headers=_headers("owner-z")
+            f"/api/cocreation/status?grant_id={grant_id}", headers=_headers("owner-z")
         ).json()
         assert status_body["used"] == 1
         assert status_body["limit"] == 2
@@ -217,6 +264,7 @@ def test_create_video_quota_and_snapshot(gateway_ready, monkeypatch) -> None:
             "/api/cocreation/videos",
             json={
                 "template_id": template["id"],
+                "grant_id": grant_id,
                 "text": "创意二",
                 "expanded_prompt": "AI 拓展后的完整提示词",
             },
@@ -231,20 +279,24 @@ def test_create_video_quota_and_snapshot(gateway_ready, monkeypatch) -> None:
         # 第 3 个:超出限额(限 2)被拒绝
         third = client.post(
             "/api/cocreation/videos",
-            json={"template_id": template["id"], "text": "创意三"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "创意三"},
             headers=_headers("owner-z"),
         )
-        assert third.status_code == 409
-        assert "共创次数已用完" in third.json()["detail"]
+        assert third.status_code == 403
+        assert "视频次数已用完" in third.json()["detail"]
 
-        # 失败任务不计入配额,释放后可以再提交
+        # 视频次数记在授权上，删除或失败都不会返还。
+        deleted = client.delete(
+            f"/api/creations/{body['id']}", headers=_headers("owner-z")
+        )
+        assert deleted.status_code == 200
         _finish_creation(second.json()["id"], "failed")
         retry = client.post(
             "/api/cocreation/videos",
-            json={"template_id": template["id"], "text": "创意三"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "创意三"},
             headers=_headers("owner-z"),
         )
-        assert retry.status_code == 200, retry.text
+        assert retry.status_code == 403
 
 
 def test_create_video_rejects_when_other_task_running(gateway_ready, monkeypatch) -> None:
@@ -257,16 +309,17 @@ def test_create_video_rejects_when_other_task_running(gateway_ready, monkeypatch
     with TestClient(create_app()) as client:
         _apply_and_approve(client, "owner-r", "D")
         template = _create_template(client, "owner-r")
+        grant_id = _grant_id(client, "owner-r")
         first = client.post(
             "/api/cocreation/videos",
-            json={"template_id": template["id"], "text": "第一条"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "第一条"},
             headers=_headers("owner-r"),
         )
         assert first.status_code == 200
         # 同用户同时只允许一个生成中任务(与个人创作共用约束)
         second = client.post(
             "/api/cocreation/videos",
-            json={"template_id": template["id"], "text": "第二条"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "第二条"},
             headers=_headers("owner-r"),
         )
         assert second.status_code == 409
@@ -297,9 +350,10 @@ def test_pipeline_resolves_owner_gateway_key(gateway_ready, monkeypatch) -> None
     with TestClient(create_app()) as client:
         _apply_and_approve(client, "owner-g", "E")
         template = _create_template(client, "owner-g")
+        grant_id = _grant_id(client, "owner-g")
         created = client.post(
             "/api/cocreation/videos",
-            json={"template_id": template["id"], "text": "创意"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "创意"},
             headers=_headers("owner-g"),
         )
         assert created.status_code == 200
@@ -338,9 +392,10 @@ def test_pipeline_prefers_owner_default_config(gateway_ready, monkeypatch) -> No
     with TestClient(create_app()) as client:
         _apply_and_approve(client, "owner-cfg", "H")
         template = _create_template(client, "owner-cfg")
+        grant_id = _grant_id(client, "owner-cfg")
         created = client.post(
             "/api/cocreation/videos",
-            json={"template_id": template["id"], "text": "创意"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "创意"},
             headers=_headers("owner-cfg"),
         )
         assert created.status_code == 200
@@ -464,9 +519,10 @@ def test_owner_sees_enterprise_videos(gateway_ready, monkeypatch) -> None:
     with TestClient(create_app()) as client:
         _apply_and_approve(client, "owner-v", "F")
         template = _create_template(client, "owner-v", name="模版F")
+        grant_id = _grant_id(client, "owner-v")
         created = client.post(
             "/api/cocreation/videos",
-            json={"template_id": template["id"], "text": "企业的作品"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "企业的作品"},
             headers=_headers("owner-v"),
         )
         assert created.status_code == 200
@@ -546,6 +602,7 @@ def test_template_interaction_fields_and_assets(gateway_ready) -> None:
                 {"asset_id": text_asset["id"], "usage": "prompt_text"},
             ],
         )
+        grant_id = _grant_id(client, "owner-b1")
         assert template["member_photo"] == "required"
         assert template["first_frame_confirm"] is True
         assert template["interaction_options"] == ["一起比心", "跳一段开工舞"]
@@ -555,19 +612,23 @@ def test_template_interaction_fields_and_assets(gateway_ready) -> None:
         assert template["cover_url"] == f"/api/ops/v1/assets/{image_asset['id']}/content"
 
         # 成员端状态接口带派生信息:封面地址、形象参考图数量
-        status = client.get("/api/cocreation/status", headers=_headers("owner-b1")).json()
+        status = client.get(
+            f"/api/cocreation/status?grant_id={grant_id}", headers=_headers("owner-b1")
+        ).json()
         row = status["templates"][0]
         assert row["character_asset_count"] == 1
         assert row["member_photo"] == "required"
         assert row["member_photo_hint"] == "请上传正脸照"
-        assert row["cover_url"] == f"/api/cocreation/templates/{template['id']}/cover"
+        assert row["cover_url"] == (
+            f"/api/cocreation/templates/{template['id']}/cover?grant_id={grant_id}"
+        )
 
         # 封面由成员鉴权后按绑定读取企业素材
         cover = client.get(row["cover_url"], headers=_headers("owner-b1"))
         assert cover.status_code == 200
         assert cover.content == _png_bytes()
         # 非本企业成员不能读
-        assert client.get(row["cover_url"], headers=_headers("stranger-x")).status_code == 403
+        assert client.get(row["cover_url"], headers=_headers("stranger-x")).status_code == 404
 
         # 文字素材不能绑成形象参考
         resp = client.post(
@@ -630,11 +691,12 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
                 {"asset_id": text_asset["id"], "usage": "prompt_text"},
             ],
         )
+        grant_id = _grant_id(client, "owner-ff")
 
         # 出镜模版未合成首帧直接提交会被拦
         early = client.post(
             "/api/cocreation/videos",
-            json={"template_id": template["id"], "text": "创意"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "创意"},
             headers=_headers("owner-ff"),
         )
         assert early.status_code == 422
@@ -643,7 +705,7 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
         # 未上传照片不能合成首帧
         no_photo = client.post(
             "/api/cocreation/first-frame",
-            json={"template_id": template["id"], "text": "打招呼"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "打招呼"},
             headers=_headers("owner-ff"),
         )
         assert no_photo.status_code == 422
@@ -659,6 +721,7 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
             "/api/cocreation/first-frame",
             json={
                 "template_id": template["id"],
+                "grant_id": grant_id,
                 "text": "打招呼",
                 "member_photo_path": photo.json()["image_path"],
             },
@@ -677,6 +740,7 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
             "/api/cocreation/videos",
             json={
                 "template_id": template["id"],
+                "grant_id": grant_id,
                 "text": "创意",
                 "first_frame_path": "users/99999/images/x.png",
             },
@@ -688,6 +752,7 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
             "/api/cocreation/videos",
             json={
                 "template_id": template["id"],
+                "grant_id": grant_id,
                 "text": "和 IP 打招呼",
                 "first_frame_path": frame_path,
             },
@@ -742,11 +807,12 @@ def test_first_frame_guardrails(gateway_ready, monkeypatch) -> None:
             "owner-rl",
             assets=[{"asset_id": image_asset["id"], "usage": "character_reference"}],
         )
+        grant_id = _grant_id(client, "owner-rl")
 
         # 画幅只认 宽x高 数字格式
         bad_size = client.post(
             "/api/cocreation/first-frame",
-            json={"template_id": template["id"], "size": "biggest"},
+            json={"grant_id": grant_id, "template_id": template["id"], "size": "biggest"},
             headers=_headers("owner-rl"),
         )
         assert bad_size.status_code == 422
@@ -763,6 +829,7 @@ def test_first_frame_guardrails(gateway_ready, monkeypatch) -> None:
             "/api/cocreation/first-frame",
             json={
                 "template_id": template["id"],
+                "grant_id": grant_id,
                 "member_photo_path": f"{own_prefix}/videos/fake.mp4",
             },
             headers=_headers("owner-rl"),
@@ -774,13 +841,13 @@ def test_first_frame_guardrails(gateway_ready, monkeypatch) -> None:
         for _ in range(2):
             ok = client.post(
                 "/api/cocreation/first-frame",
-                json={"template_id": template["id"], "text": "打招呼"},
+                json={"grant_id": grant_id, "template_id": template["id"], "text": "打招呼"},
                 headers=_headers("owner-rl"),
             )
             assert ok.status_code == 200, ok.text
         limited = client.post(
             "/api/cocreation/first-frame",
-            json={"template_id": template["id"], "text": "打招呼"},
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "打招呼"},
             headers=_headers("owner-rl"),
         )
         assert limited.status_code == 429
@@ -810,19 +877,8 @@ def test_template_character_reference_binding_cap(gateway_ready) -> None:
         assert "形象参考图" in resp.json()["detail"]
 
 
-def _entry_token(client: TestClient, sub: str) -> str:
-    from urllib.parse import parse_qs, urlparse
-
-    created = client.post(
-        "/api/ops/v1/enterprise-entry",
-        headers={**_headers(sub), "Origin": "http://127.0.0.1:5173"},
-    )
-    assert created.status_code == 200, created.text
-    return parse_qs(urlparse(created.json()["entry_url"]).query)["enterprise_entry"][0]
-
-
-def test_entry_auto_join_grants_cocreation(gateway_ready) -> None:
-    """开启自动加入的企业入口:链接访客自动成为成员(免二次确认),共创立即可用。"""
+def test_entry_creates_temporary_grant_without_membership(gateway_ready) -> None:
+    """入口访客确认说明后获得临时授权，但不会成为企业成员。"""
     from sqlalchemy import select
 
     from backend.app import create_app
@@ -845,82 +901,198 @@ def test_entry_auto_join_grants_cocreation(gateway_ready) -> None:
         _create_template(client, "owner-aj")
         token = _entry_token(client, "owner-aj")
 
-        # 默认不开自动加入:陌生访客 403;非 Owner 改不了入口配置
-        assert client.post(
-            "/api/enterprise-entry/resolve",
-            json={"token": token},
-            headers=_headers("visitor-x"),
-        ).status_code == 403
-        assert client.patch(
-            "/api/ops/v1/enterprise-entry",
-            json={"auto_join": True},
-            headers=_headers("visitor-x"),
-        ).status_code == 403
+        preview = client.get(f"/api/enterprise-entry/preview?token={token}")
+        assert preview.status_code == 200
+        assert preview.json()["enterprise_name"] == "共创企业O"
+        assert preview.json()["video_limit"] == settings.cocreation_max_videos_per_user
 
-        # 开启自动加入:访客解析入口即自动成为启用成员
-        toggled = client.patch(
-            "/api/ops/v1/enterprise-entry",
-            json={"auto_join": True},
-            headers=_headers("owner-aj"),
-        )
-        assert toggled.status_code == 200, toggled.text
-        assert toggled.json()["auto_join"] is True
-
-        resolved = client.post(
-            "/api/enterprise-entry/resolve",
-            json={"token": token},
+        # 必须确认当前版本的服务与隐私说明。
+        denied = client.post(
+            "/api/enterprise-entry/apply",
+            json={
+                "token": token,
+                "accepted": False,
+                "terms_version": preview.json()["terms_version"],
+                "privacy_version": preview.json()["privacy_version"],
+            },
             headers=_headers("visitor-x"),
         )
-        assert resolved.status_code == 200, resolved.text
-        enterprise_id = resolved.json()["enterprise_id"]
-        membership = _membership("visitor-x", enterprise_id)
-        assert membership is not None
-        assert membership.role == "member"
-        assert membership.status == "active"
+        assert denied.status_code == 422
 
-        # 成员共创状态可用(tab 可见性由后端判定)
-        status = client.get("/api/cocreation/status", headers=_headers("visitor-x")).json()
+        applied = client.post(
+            "/api/enterprise-entry/apply",
+            json={
+                "token": token,
+                "accepted": True,
+                "terms_version": preview.json()["terms_version"],
+                "privacy_version": preview.json()["privacy_version"],
+            },
+            headers=_headers("visitor-x"),
+        )
+        assert applied.status_code == 200, applied.text
+        grant = applied.json()
+        assert grant["status"] == "active"
+        assert grant["video_remaining"] == settings.cocreation_max_videos_per_user
+        enterprise_id = grant["enterprise_id"]
+        assert _membership("visitor-x", enterprise_id) is None
+
+        access = client.get(
+            f"/api/enterprise-entry/access-context?token={token}",
+            headers=_headers("visitor-x"),
+        )
+        assert access.status_code == 200
+        assert access.json()["grant"]["id"] == grant["id"]
+
+        status = client.get(
+            f"/api/cocreation/status?grant_id={grant['id']}",
+            headers=_headers("visitor-x"),
+        ).json()
         assert status["available"] is True
         assert status["templates"]
 
-        # 重复解析幂等;成员刷新后仍能拿到企业业务身份
+        # 授权不能被其他登录用户冒用。
+        other_status = client.get(
+            f"/api/cocreation/status?grant_id={grant['id']}",
+            headers=_headers("visitor-y"),
+        ).json()
+        assert other_status["available"] is False
+
+        # 有效期内重复申请幂等；企业侧可以查看并撤销。
         again = client.post(
-            "/api/enterprise-entry/resolve",
-            json={"token": token},
+            "/api/enterprise-entry/apply",
+            json={
+                "token": token,
+                "accepted": True,
+                "terms_version": preview.json()["terms_version"],
+                "privacy_version": preview.json()["privacy_version"],
+            },
             headers=_headers("visitor-x"),
         )
-        assert again.status_code == 200
-        assert _membership("visitor-x", enterprise_id) is not None
-        assert client.get(
-            "/api/enterprise-entry/context", headers=_headers("visitor-x")
-        ).json() == resolved.json()
+        assert again.json()["id"] == grant["id"]
 
-        # 关掉自动加入:新访客不再自动加入,已加入成员不受影响
-        off = client.patch(
-            "/api/ops/v1/enterprise-entry",
-            json={"auto_join": False},
+        listed = client.get(
+            "/api/ops/v1/cocreation-grants", headers=_headers("owner-aj")
+        )
+        assert listed.status_code == 200
+        assert listed.json()[0]["oauth_sub"] == "visitor-x"
+        revoked = client.post(
+            f"/api/ops/v1/cocreation-grants/{grant['id']}/revoke",
+            json={"reason": "活动结束"},
             headers=_headers("owner-aj"),
         )
-        assert off.json()["auto_join"] is False
-        assert client.post(
-            "/api/enterprise-entry/resolve",
-            json={"token": token},
-            headers=_headers("visitor-y"),
+        assert revoked.status_code == 200
+        assert revoked.json()["status"] == "revoked"
+        assert client.get(
+            f"/api/cocreation/status?grant_id={grant['id']}",
+            headers=_headers("visitor-x"),
+        ).json()["available"] is False
+
+        # 撤销后用户重新确认会生成新授权记录，历史仍保留。
+        reapplied = client.post(
+            "/api/enterprise-entry/apply",
+            json={
+                "token": token,
+                "accepted": True,
+                "terms_version": preview.json()["terms_version"],
+                "privacy_version": preview.json()["privacy_version"],
+            },
+            headers=_headers("visitor-x"),
+        )
+        assert reapplied.status_code == 200
+        assert reapplied.json()["id"] != grant["id"]
+        assert _membership("visitor-x", enterprise_id) is None
+
+        # 非 Owner 不能读取或管理企业授权列表。
+        assert client.patch(
+            "/api/ops/v1/enterprise-entry",
+            json={"video_limit": 9},
+            headers=_headers("visitor-x"),
         ).status_code == 403
-        assert client.get(
-            "/api/cocreation/status", headers=_headers("visitor-x")
-        ).json()["available"] is True
-
-        # 停用入口后 token 失效,即使重新打开自动加入也无法进入
-        client.patch(
-            "/api/ops/v1/enterprise-entry",
-            json={"auto_join": True},
-            headers=_headers("owner-aj"),
-        )
         disabled = client.delete("/api/ops/v1/enterprise-entry", headers=_headers("owner-aj"))
         assert disabled.json()["active"] is False
-        assert client.post(
-            "/api/enterprise-entry/resolve",
-            json={"token": token},
-            headers=_headers("visitor-z"),
+        assert client.get(f"/api/enterprise-entry/preview?token={token}").status_code == 404
+
+
+def test_expired_grant_requires_new_consent_period(gateway_ready) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from backend.app import create_app
+    from backend.database import SessionLocal
+    from backend.models import EnterpriseConsumerGrant
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-expire", "P")
+        _create_template(client, "owner-expire")
+        token = _entry_token(client, "owner-expire")
+        preview = client.get(f"/api/enterprise-entry/preview?token={token}").json()
+        first = client.post(
+            "/api/enterprise-entry/apply",
+            json={
+                "token": token,
+                "accepted": True,
+                "terms_version": preview["terms_version"],
+                "privacy_version": preview["privacy_version"],
+            },
+            headers=_headers("visitor-expire"),
+        ).json()
+
+        with SessionLocal() as db:
+            grant = db.get(EnterpriseConsumerGrant, first["id"])
+            grant.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.commit()
+
+        status = client.get(
+            f"/api/cocreation/status?grant_id={first['id']}",
+            headers=_headers("visitor-expire"),
+        ).json()
+        assert status["available"] is False
+        assert "到期" in status["reason"]
+        blocked = client.post(
+            "/api/cocreation/videos",
+            json={"grant_id": first["id"], "template_id": 1, "text": "过期请求"},
+            headers=_headers("visitor-expire"),
+        )
+        assert blocked.status_code == 403
+
+        renewed = client.post(
+            "/api/enterprise-entry/apply",
+            json={
+                "token": token,
+                "accepted": True,
+                "terms_version": preview["terms_version"],
+                "privacy_version": preview["privacy_version"],
+            },
+            headers=_headers("visitor-expire"),
+        )
+        assert renewed.status_code == 200
+        assert renewed.json()["status"] == "active"
+        assert renewed.json()["id"] != first["id"]
+
+
+def test_grant_cannot_cross_enterprise_templates(gateway_ready) -> None:
+    from backend.app import create_app
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-one", "Q1")
+        template_one = _create_template(client, "owner-one")
+        grant_one = _grant_id(client, "owner-one", "shared-visitor")
+
+        _apply_and_approve(client, "owner-two", "Q2")
+        template_two = _create_template(client, "owner-two")
+        grant_two = _grant_id(client, "owner-two", "shared-visitor")
+
+        assert template_one["id"] != template_two["id"]
+        crossed = client.post(
+            "/api/cocreation/videos",
+            json={
+                "grant_id": grant_one,
+                "template_id": template_two["id"],
+                "text": "尝试跨企业使用模版",
+            },
+            headers=_headers("shared-visitor"),
+        )
+        assert crossed.status_code == 404
+        assert client.get(
+            f"/api/cocreation/templates/{template_one['id']}/cover?grant_id={grant_two}",
+            headers=_headers("shared-visitor"),
         ).status_code == 404

@@ -344,11 +344,17 @@ a {
   background: #fff1cc;
 }
 .status-rejected,
+.status-revoked,
 .status-suspended,
 .status-archived,
 .status-disabled {
   color: #913c30;
   background: #fbe7e3;
+}
+.status-expired,
+.status-exhausted {
+  color: #5d6470;
+  background: #eceff2;
 }
 
 .ops-form {
@@ -1223,6 +1229,59 @@ a {
   border-radius: 6px;
   background: #fff;
   font-size: 13px;
+}
+
+.entry-grant-policy {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 180px)) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--ops-line);
+  border-radius: 8px;
+  background: var(--ops-soft);
+}
+
+.entry-grant-policy label {
+  display: grid;
+  gap: 6px;
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.entry-grant-policy input {
+  width: 100%;
+}
+
+.entry-grants-section {
+  margin-top: 28px;
+}
+
+.entry-grants-section .ops-section-head {
+  margin-bottom: 12px;
+}
+
+.entry-grants-section .ops-section-head h3 {
+  margin: 0 0 4px;
+}
+
+.entry-grants-section .ops-section-head > span {
+  color: var(--ops-muted);
+  font-size: 13px;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 110px;
+}
+
+@media (max-width: 760px) {
+  .entry-grant-policy {
+    grid-template-columns: 1fr;
+  }
 }
 .entry-security-note {
   margin: 11px 0 0;

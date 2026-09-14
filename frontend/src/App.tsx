@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ConfigPanel from './components/ConfigPanel'
 import CoCreationPanel from './components/CoCreationPanel'
+import EnterpriseAccessGate from './components/EnterpriseAccessGate'
 import HistoryPanel from './components/HistoryPanel'
 import VlogPanel from './components/VlogPanel'
 import {
   createCreation,
+  applyEnterpriseEntry,
   expandText,
   fetchMe,
   generateImage,
+  getEnterpriseAccessContext,
   getEnterpriseContext,
   getCocreationStatus,
   getCreation,
@@ -15,7 +18,7 @@ import {
   listCreations,
   listStyles,
   logout,
-  resolveEnterpriseEntry,
+  previewEnterpriseEntry,
   uploadImage,
 } from './api'
 import {
@@ -24,6 +27,8 @@ import {
   type CoCreationStatus,
   type Creation,
   type EnterpriseBusinessContext,
+  type EnterpriseEntryContext,
+  type EnterpriseEntryPreview,
   type ImageSource,
   type ModelConfig,
   type StylePreset,
@@ -42,10 +47,18 @@ const IMAGE_SIZES = [
 const DURATIONS = [4, 5, 10]
 
 export default function App() {
+  const [enterpriseToken] = useState(() =>
+    new URLSearchParams(window.location.search).get('enterprise_entry'),
+  )
   const [workspace, setWorkspace] = useState<'creative' | 'vlog' | 'cocreation'>('creative')
   const [me, setMe] = useState<AuthUser | null>(null)
   const [enterpriseContext, setEnterpriseContext] = useState<EnterpriseBusinessContext | null>(null)
   const [loggedOut, setLoggedOut] = useState(isExplicitlyLoggedOut)
+  const [entryPreview, setEntryPreview] = useState<EnterpriseEntryPreview | null>(null)
+  const [entryAccess, setEntryAccess] = useState<EnterpriseEntryContext | null>(null)
+  const [entryLoading, setEntryLoading] = useState(!!enterpriseToken)
+  const [entryBusy, setEntryBusy] = useState(false)
+  const [entryError, setEntryError] = useState('')
   const [configs, setConfigs] = useState<ModelConfig[]>([])
   const [styles, setStyles] = useState<StylePreset[]>([])
   const [configId, setConfigId] = useState<number | null>(null)
@@ -73,37 +86,82 @@ export default function App() {
 
   const config = configs.find((c) => c.id === configId) ?? null
 
-  // 未登录先跳 OAuth;fetchMe 的 401 不走 api.ts 的自动跳转(auth 路径除外),这里显式处理
+  useEffect(() => {
+    if (!enterpriseToken) return
+    setEntryLoading(true)
+    previewEnterpriseEntry(enterpriseToken)
+      .then((preview) => {
+        setEntryPreview(preview)
+        setEntryError('')
+      })
+      .catch((reason) => {
+        setEntryError(reason instanceof Error ? reason.message : '企业入口无效')
+      })
+      .finally(() => setEntryLoading(false))
+  }, [enterpriseToken])
+
+  // 企业入口先展示企业信息，由用户主动登录；普通首页继续保持原来的自动登录。
   useEffect(() => {
     if (loggedOut) return
     fetchMe()
-      .then(setMe)
-      .catch(() => {
-        beginLogin(`${window.location.pathname}${window.location.search}`)
+      .then((user) => {
+        setMe(user)
+        setLoggedOut(false)
       })
-  }, [loggedOut])
+      .catch(() => {
+        if (enterpriseToken) setLoggedOut(true)
+        else beginLogin(`${window.location.pathname}${window.location.search}`)
+      })
+  }, [enterpriseToken, loggedOut])
 
   useEffect(() => {
     if (!me) return
-    const params = new URLSearchParams(window.location.search)
-    const token = params.get('enterprise_entry')
-    if (token) {
-      params.delete('enterprise_entry')
-      const query = params.toString()
-      window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+    if (enterpriseToken) {
+      setEntryLoading(true)
+      getEnterpriseAccessContext(enterpriseToken)
+        .then((context) => {
+          setEntryAccess(context)
+          setEntryPreview(context.preview)
+          setEnterpriseContext({
+            enterprise_id: context.preview.enterprise_id,
+            enterprise_name: context.preview.enterprise_name,
+          })
+          if (context.grant?.status === 'active') {
+            getCocreationStatus(context.grant.id)
+              .then((status) => {
+                setCoStatus(status)
+                setWorkspace('cocreation')
+              })
+              .catch(() => {
+                setCoStatus({
+                  available: false,
+                  reason: '无法加载企业共创配置，请稍后刷新重试',
+                  templates: [],
+                  used: context.grant!.video_used,
+                  limit: context.grant!.video_limit,
+                  grant_id: context.grant!.id,
+                  enterprise_name: context.preview.enterprise_name,
+                  expires_at: context.grant!.expires_at,
+                })
+                setWorkspace('cocreation')
+              })
+          }
+        })
+        .catch((reason) => {
+          setEntryError(reason instanceof Error ? reason.message : '无法读取共创授权')
+        })
+        .finally(() => setEntryLoading(false))
+      return
     }
-    const loadContext = token ? resolveEnterpriseEntry(token) : getEnterpriseContext()
-    loadContext
+    getEnterpriseContext()
       .then((ctx) => {
         setEnterpriseContext(ctx)
-        // 开了自动加入的入口在解析后才建立企业关系,重查共创可见性让 tab 立即出现
-        getCocreationStatus().then(setCoStatus).catch(() => {})
       })
       .catch((reason) => {
         setEnterpriseContext(null)
         setError(reason instanceof Error ? reason.message : '无法识别企业入口')
       })
-  }, [me])
+  }, [enterpriseToken, me])
 
   const doLogout = async () => {
     let ssoLogoutUrl: string | null = null
@@ -115,7 +173,31 @@ export default function App() {
     setLoggedOut(true)
     setMe(null)
     setEnterpriseContext(null)
+    setEntryAccess(null)
+    setCoStatus(null)
     completeLogout(ssoLogoutUrl)
+  }
+
+  const applyForEnterprise = async () => {
+    if (!enterpriseToken || !entryPreview) return
+    setEntryBusy(true)
+    setEntryError('')
+    try {
+      const grant = await applyEnterpriseEntry(
+        enterpriseToken,
+        entryPreview.terms_version,
+        entryPreview.privacy_version,
+      )
+      const context = { preview: entryPreview, grant }
+      setEntryAccess(context)
+      const status = await getCocreationStatus(grant.id)
+      setCoStatus(status)
+      setWorkspace('cocreation')
+    } catch (reason) {
+      setEntryError(reason instanceof Error ? reason.message : '申请共创授权失败')
+    } finally {
+      setEntryBusy(false)
+    }
   }
 
   const refreshConfigs = useCallback(async () => {
@@ -130,13 +212,11 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (loggedOut) return
+    if (loggedOut || !me) return
     refreshConfigs().catch((e) => setError((e as Error).message))
     // 风格预设从后端拉取(启动时幂等播种,可改库自定义)
     listStyles().then(setStyles).catch(() => {})
-    // 共创 tab 显隐由后端判定(企业绑定 + 模版配置 + 服务开关)
-    getCocreationStatus().then(setCoStatus).catch(() => setCoStatus({ available: false, reason: '', templates: [], used: 0, limit: 0 }))
-  }, [refreshConfigs, loggedOut])
+  }, [refreshConfigs, loggedOut, me])
 
   useEffect(() => {
     if (configId) localStorage.setItem(CONFIG_KEY, String(configId))
@@ -145,7 +225,7 @@ export default function App() {
   // 刷新页面后,恢复仍在生成中的任务进度与表单内容
   const restoredRef = useRef(false)
   useEffect(() => {
-    if (loggedOut) return
+    if (loggedOut || !me) return
     if (restoredRef.current) return
     restoredRef.current = true
     listCreations(20)
@@ -157,7 +237,7 @@ export default function App() {
       })
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loggedOut])
+  }, [loggedOut, me])
 
   // 生成中轮询任务状态;完成/失败时发系统通知
   useEffect(() => {
@@ -353,6 +433,24 @@ export default function App() {
     </section>
   )
 
+  const entryGrant = entryAccess?.grant ?? null
+  const activeEntryLoading = entryGrant?.status === 'active' && !coStatus
+  if (enterpriseToken && (!me || entryGrant?.status !== 'active' || activeEntryLoading)) {
+    return (
+      <EnterpriseAccessGate
+        preview={entryPreview}
+        grant={entryGrant}
+        user={me}
+        loading={entryLoading || activeEntryLoading}
+        busy={entryBusy}
+        error={entryError}
+        onLogin={() => beginLogin(`${window.location.pathname}${window.location.search}`)}
+        onLogout={() => void doLogout()}
+        onApply={applyForEnterprise}
+      />
+    )
+  }
+
   if (loggedOut) {
     return (
       <div className="app">
@@ -407,28 +505,32 @@ export default function App() {
           <button className="btn" onClick={doLogout}>
             退出登录
           </button>
-          {configs.length > 0 ? (
-            <select className="config-select" value={configId ?? ''} onChange={(e) => setConfigId(Number(e.target.value))}>
-              {configs.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.is_default ? '(默认)' : ''}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <span className="muted small">暂无配置</span>
+          {!enterpriseToken && (
+            <>
+              {configs.length > 0 ? (
+                <select className="config-select" value={configId ?? ''} onChange={(e) => setConfigId(Number(e.target.value))}>
+                  {configs.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.is_default ? '(默认)' : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="muted small">暂无配置</span>
+              )}
+              <button className="btn" onClick={() => setConfigOpen(true)}>
+                模型配置
+              </button>
+            </>
           )}
-          <button className="btn" onClick={() => setConfigOpen(true)}>
-            模型配置
-          </button>
           <button className="btn" onClick={() => setHistoryOpen(true)}>
             历史记录
           </button>
         </div>
       </header>
 
-      {configs.length === 0 && (
+      {workspace === 'creative' && configs.length === 0 && (
         <div className="callout">
           还没有模型配置。点击
           <button className="link-btn" onClick={() => setConfigOpen(true)}>
@@ -439,23 +541,27 @@ export default function App() {
       )}
 
       <nav className="workspace-tabs" aria-label="创作模式">
-        <button
-          type="button"
-          className={workspace === 'creative' ? 'active' : ''}
-          aria-current={workspace === 'creative' ? 'page' : undefined}
-          onClick={() => setWorkspace('creative')}
-        >
-          创意视频
-        </button>
-        <button
-          type="button"
-          className={workspace === 'vlog' ? 'active' : ''}
-          aria-current={workspace === 'vlog' ? 'page' : undefined}
-          onClick={() => setWorkspace('vlog')}
-        >
-          Vlog
-        </button>
-        {coStatus?.available && (
+        {!enterpriseToken && (
+          <>
+            <button
+              type="button"
+              className={workspace === 'creative' ? 'active' : ''}
+              aria-current={workspace === 'creative' ? 'page' : undefined}
+              onClick={() => setWorkspace('creative')}
+            >
+              创意视频
+            </button>
+            <button
+              type="button"
+              className={workspace === 'vlog' ? 'active' : ''}
+              aria-current={workspace === 'vlog' ? 'page' : undefined}
+              onClick={() => setWorkspace('vlog')}
+            >
+              Vlog
+            </button>
+          </>
+        )}
+        {coStatus?.grant_id && coStatus.templates.length > 0 && (
           <button
             type="button"
             className={workspace === 'cocreation' ? 'active' : ''}
@@ -655,8 +761,9 @@ export default function App() {
             )}
           </div>,
         )}
-      </main> : workspace === 'cocreation' && coStatus?.available ? <CoCreationPanel
+      </main> : workspace === 'cocreation' && coStatus?.grant_id ? <CoCreationPanel
         status={coStatus}
+        grantId={coStatus.grant_id}
         onStatusChange={setCoStatus}
       /> : <VlogPanel
         config={config}

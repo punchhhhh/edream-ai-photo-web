@@ -3,6 +3,9 @@ import type {
   CoCreationFirstFrame,
   CoCreationStatus,
   Creation,
+  EnterpriseConsumerGrant,
+  EnterpriseEntryContext,
+  EnterpriseEntryPreview,
   EnterpriseBusinessContext,
   ModelConfig,
   StylePreset,
@@ -48,10 +51,25 @@ export const fetchMe = () => request<AuthUser>('/api/auth/me')
 export const getEnterpriseContext = () =>
   request<EnterpriseBusinessContext | null>('/api/enterprise-entry/context')
 
-export const resolveEnterpriseEntry = (token: string) =>
-  request<EnterpriseBusinessContext>('/api/enterprise-entry/resolve', {
+export const previewEnterpriseEntry = (token: string) =>
+  request<EnterpriseEntryPreview>(`/api/enterprise-entry/preview?token=${encodeURIComponent(token)}`)
+
+export const getEnterpriseAccessContext = (token: string) =>
+  request<EnterpriseEntryContext>(`/api/enterprise-entry/access-context?token=${encodeURIComponent(token)}`)
+
+export const applyEnterpriseEntry = (
+  token: string,
+  termsVersion: string,
+  privacyVersion: string,
+) =>
+  request<EnterpriseConsumerGrant>('/api/enterprise-entry/apply', {
     method: 'POST',
-    body: JSON.stringify({ token }),
+    body: JSON.stringify({
+      token,
+      accepted: true,
+      terms_version: termsVersion,
+      privacy_version: privacyVersion,
+    }),
   })
 
 // sso_logout_url:jwt 模式下由页面后台清理 Casdoor 当前设备会话;dev 模式为 null
@@ -123,25 +141,30 @@ export const deleteCreation = (id: number) => request<{ ok: boolean }>(`/api/cre
 export const listStyles = () => request<StylePreset[]>('/api/styles')
 
 // ---- 企业共创视频 ----
-export const getCocreationStatus = () => request<CoCreationStatus>('/api/cocreation/status')
+export const getCocreationStatus = (grantId?: number | null) =>
+  request<CoCreationStatus>(
+    `/api/cocreation/status${grantId ? `?grant_id=${grantId}` : ''}`,
+  )
 
-export const expandCocreation = (templateId: number, text: string) =>
+export const expandCocreation = (grantId: number, templateId: number, text: string) =>
   request<{ expanded_prompt: string }>('/api/cocreation/expand', {
     method: 'POST',
-    body: JSON.stringify({ template_id: templateId, text }),
+    body: JSON.stringify({ grant_id: grantId, template_id: templateId, text }),
   })
 
 // 合拍首帧:成员照片 + 企业 IP 形象参考图 → 同框首帧
 export const composeCocreationFirstFrame = (
+  grantId: number,
   templateId: number,
   payload: { text?: string; member_photo_path?: string | null; size?: string },
 ) =>
   request<CoCreationFirstFrame>('/api/cocreation/first-frame', {
     method: 'POST',
-    body: JSON.stringify({ template_id: templateId, ...payload }),
+    body: JSON.stringify({ grant_id: grantId, template_id: templateId, ...payload }),
   })
 
 export const createCocreationVideo = (payload: {
+  grant_id: number
   template_id: number
   text: string
   expanded_prompt?: string

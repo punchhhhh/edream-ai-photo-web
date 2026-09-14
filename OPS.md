@@ -76,6 +76,12 @@ backend/storage.py      local / COS 共用存储抽象
 
 完整请求示例、字段语义、生成任务落库建议和联调清单见 [主业务接入企业素材指南](docs/enterprise-material-integration.md)。
 
+## C 端临时授权设计
+
+企业入口采用 Casdoor 登录后的临时 Grant，不会把 C 端访客写成企业成员。用户确认服务与隐私说明后自动获批，在有效期和视频次数内使用该企业模板、素材与模型配置；企业可在 Ops 查看、撤销或续期授权。核心视频生成流水线保持不变。
+
+完整的数据模型、登录注册流程、隐私确认、接口、页面、迁移步骤和验收标准见 [企业 C 端共创授权、登录与隐私确认设计](docs/enterprise-consumer-authorization-design.md)。
+
 ## 额度一致性
 
 上传先在数据库锁定并增加 `reserved_bytes`，批量上传按整批总大小一次预占；全部对象成功后再逐项转入 `used_bytes`，任一对象失败会删除本批已写对象、标记失败记录并释放整批预占。文件替换保留历史版本并继续占用额度，删除素材时删除全部版本后统一释放。所有变动写入 `enterprise_quota_ledger`，认证、企业入口、素材、额度和内部读取写入 `audit_logs`。

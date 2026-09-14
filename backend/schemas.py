@@ -295,6 +295,7 @@ class CoCreationTemplateOut(BaseModel):
     interaction_options: list[str] = []
     character_asset_count: int = 0
     cover_url: str | None = None
+    can_expand: bool = False
 
 
 class CoCreationStatusOut(BaseModel):
@@ -305,17 +306,22 @@ class CoCreationStatusOut(BaseModel):
     templates: list[CoCreationTemplateOut] = []
     used: int = 0
     limit: int = 0
+    grant_id: int | None = None
+    enterprise_name: str = ""
+    expires_at: datetime | None = None
 
 
 class CoCreationExpandIn(BaseModel):
     template_id: int
     text: str = Field(min_length=1, max_length=2000)
+    grant_id: int | None = None
 
 
 class CoCreationFirstFrameIn(BaseModel):
     """合拍首帧合成:成员照片 + 企业 IP 形象参考图 → 同框首帧。"""
 
     template_id: int
+    grant_id: int | None = None
     text: str = Field(default="", max_length=2000)
     # /api/upload 返回的存储 key;模版要求出镜时必传
     member_photo_path: str | None = Field(default=None, max_length=500)
@@ -330,6 +336,7 @@ class CoCreationFirstFrameOut(BaseModel):
 
 class CoCreationVideoCreateIn(BaseModel):
     template_id: int
+    grant_id: int | None = None
     text: str = Field(min_length=1, max_length=2000)
     expanded_prompt: str = Field(default="", max_length=4000)
     # /api/cocreation/first-frame 返回的首帧存储 key;传了走图生视频

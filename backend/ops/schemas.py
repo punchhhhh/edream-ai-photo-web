@@ -86,8 +86,12 @@ class EnterpriseEntryOut(BaseModel):
     enterprise_id: int
     enterprise_name: str
     active: bool
-    # 链接访客是否自动加入企业(无需二次确认,即可使用共创等成员能力)
-    auto_join: bool = False
+    auto_approve: bool = True
+    expires_at: datetime | None = None
+    grant_ttl_hours: int = 24
+    video_limit: int = 3
+    terms_version: str = ""
+    privacy_version: str = ""
     entry_url: str | None
     created_at: datetime | None
     updated_at: datetime | None
@@ -96,16 +100,68 @@ class EnterpriseEntryOut(BaseModel):
 class EnterpriseEntryUpdateIn(BaseModel):
     """调整入口行为;更新链接(token 轮换)仍走 POST,两者互不影响。"""
 
-    auto_join: bool
-
-
-class EnterpriseEntryResolveIn(BaseModel):
-    token: str = Field(min_length=20, max_length=128)
+    grant_ttl_hours: int | None = Field(default=None, ge=1, le=24 * 30)
+    video_limit: int | None = Field(default=None, ge=1, le=100)
 
 
 class EnterpriseBusinessContextOut(BaseModel):
     enterprise_id: int
     enterprise_name: str
+
+
+class EnterpriseEntryPreviewOut(BaseModel):
+    enterprise_id: int
+    enterprise_name: str
+    enterprise_description: str = ""
+    approval_mode: Literal["auto", "manual"]
+    grant_ttl_hours: int
+    video_limit: int
+    terms_version: str
+    privacy_version: str
+
+
+class EnterpriseEntryApplyIn(BaseModel):
+    token: str = Field(min_length=20, max_length=128)
+    accepted: bool
+    terms_version: str = Field(min_length=1, max_length=40)
+    privacy_version: str = Field(min_length=1, max_length=40)
+
+
+class EnterpriseConsumerGrantOut(BaseModel):
+    id: int
+    enterprise_id: int
+    enterprise_name: str
+    entry_id: int
+    user_id: int
+    status: str
+    approval_mode: str
+    expires_at: datetime | None
+    video_limit: int
+    video_used: int
+    video_remaining: int
+    terms_version: str
+    privacy_version: str
+    consented_at: datetime | None
+
+
+class EnterpriseEntryContextOut(BaseModel):
+    preview: EnterpriseEntryPreviewOut
+    grant: EnterpriseConsumerGrantOut | None = None
+
+
+class EnterpriseConsumerGrantAdminOut(EnterpriseConsumerGrantOut):
+    oauth_sub: str
+    display_name: str | None
+    email: str | None
+    applied_at: datetime
+    approved_at: datetime | None
+    last_used_at: datetime | None
+    decision_reason: str
+
+
+class EnterpriseGrantActionIn(BaseModel):
+    reason: str = Field(default="", max_length=500)
+    ttl_hours: int | None = Field(default=None, ge=1, le=24 * 30)
 
 
 class OpsProfileOut(BaseModel):

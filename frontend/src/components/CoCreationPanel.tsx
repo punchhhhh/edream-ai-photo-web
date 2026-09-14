@@ -18,11 +18,12 @@ import { downloadName, notify, requestNotifyPermission } from '../utils'
 
 interface Props {
   status: CoCreationStatus
+  grantId: number
   /** 次数变化后通知父级刷新状态(含提交成功与任务终态) */
   onStatusChange: (status: CoCreationStatus) => void
 }
 
-export default function CoCreationPanel({ status, onStatusChange }: Props) {
+export default function CoCreationPanel({ status, grantId, onStatusChange }: Props) {
   const [templateId, setTemplateId] = useState<number | null>(status.templates[0]?.id ?? null)
   const [text, setText] = useState('')
   const [expanded, setExpanded] = useState('')
@@ -42,6 +43,7 @@ export default function CoCreationPanel({ status, onStatusChange }: Props) {
     status.templates.find((t) => t.id === templateId) ?? null
   const generating = creation?.status === 'pending' || creation?.status === 'generating_video'
   const quotaLeft = Math.max(0, status.limit - status.used)
+  const grantUsable = status.available
 
   const needsPhoto = !!template && template.member_photo !== 'none'
   const photoReady = !!photoPath || (template?.member_photo === 'optional' && photoSkipped)
@@ -59,7 +61,7 @@ export default function CoCreationPanel({ status, onStatusChange }: Props) {
         if (latest.status !== creation.status) {
           if (latest.status === 'completed') notify('✅ 共创视频生成完成', latest.input_text.slice(0, 60))
           else if (latest.status === 'failed') notify('❌ 共创视频生成失败', (latest.error ?? '').slice(0, 80))
-          getCocreationStatus().then(onStatusChange).catch(() => {})
+          getCocreationStatus(grantId).then(onStatusChange).catch(() => {})
         }
         setCreation(latest)
       } catch {
@@ -68,7 +70,7 @@ export default function CoCreationPanel({ status, onStatusChange }: Props) {
     }, 3000)
     return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [creation])
+  }, [creation, grantId, onStatusChange])
 
   const switchTemplate = (t: CoCreationTemplate) => {
     setTemplateId(t.id)
@@ -102,7 +104,7 @@ export default function CoCreationPanel({ status, onStatusChange }: Props) {
     setExpanding(true)
     setError('')
     try {
-      const { expanded_prompt } = await expandCocreation(template.id, text.trim())
+      const { expanded_prompt } = await expandCocreation(grantId, template.id, text.trim())
       setExpanded(expanded_prompt)
     } catch (e) {
       setError((e as Error).message)
@@ -112,14 +114,14 @@ export default function CoCreationPanel({ status, onStatusChange }: Props) {
   }
 
   const canComposeFrame =
-    !!template && needsFirstFrame && (!needsPhoto || photoReady) && !framing && quotaLeft > 0
+    grantUsable && !!template && needsFirstFrame && (!needsPhoto || photoReady) && !framing && quotaLeft > 0
 
   const doComposeFrame = async (): Promise<string | null> => {
     if (!template || !canComposeFrame) return null
     setFraming(true)
     setError('')
     try {
-      const result = await composeCocreationFirstFrame(template.id, {
+      const result = await composeCocreationFirstFrame(grantId, template.id, {
         text: text.trim() || undefined,
         member_photo_path: photoPath ?? undefined,
       })
@@ -141,6 +143,7 @@ export default function CoCreationPanel({ status, onStatusChange }: Props) {
 
   const canSubmit =
     !!template &&
+    grantUsable &&
     !!text.trim() &&
     quotaLeft > 0 &&
     !submitting &&
@@ -157,13 +160,14 @@ export default function CoCreationPanel({ status, onStatusChange }: Props) {
     requestNotifyPermission()
     try {
       const c = await createCocreationVideo({
+        grant_id: grantId,
         template_id: template.id,
         text: text.trim(),
         expanded_prompt: expanded.trim() || undefined,
         first_frame_path: effectiveFrame || undefined,
       })
       setCreation(c)
-      getCocreationStatus().then(onStatusChange).catch(() => {})
+      getCocreationStatus(grantId).then(onStatusChange).catch(() => {})
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -251,6 +255,7 @@ export default function CoCreationPanel({ status, onStatusChange }: Props) {
 
   return (
     <main className="steps">
+      {!grantUsable && status.reason && <div className="callout">{status.reason}</div>}
       {error && (
         <div className="alert error">
           {error}
@@ -370,7 +375,7 @@ export default function CoCreationPanel({ status, onStatusChange }: Props) {
               />
               {template.chat_model && (
                 <div className="expand-actions">
-                  <button className="btn primary" disabled={!text.trim() || expanding} onClick={doExpand}>
+                  <button className="btn primary" disabled={!grantUsable || !text.trim() || expanding} onClick={doExpand}>
                     {expanding ? 'AI 拓展中…' : expanded ? '重新拓展' : '✨ AI 拓展'}
                   </button>
                   <span className="muted small">用企业网关密钥把创意扩写为视频提示词,可编辑</span>

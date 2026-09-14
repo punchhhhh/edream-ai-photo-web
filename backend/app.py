@@ -10,7 +10,7 @@ from . import media, storage
 from .database import init_db
 from .internal import materials
 from .ops import cocreation as ops_cocreation
-from .ops import enterprise
+from .ops import enterprise, grants
 from .routers import auth, cocreation, configs, creations, enterprise_entry, styles, vlogs
 from .schemas import HealthOut
 from .services import merge_queue, video_merge
@@ -78,6 +78,7 @@ def create_app() -> FastAPI:
     app.include_router(enterprise_entry.router, prefix="/api")
     app.include_router(enterprise.router, prefix="/api")
     app.include_router(ops_cocreation.router, prefix="/api")
+    app.include_router(grants.router, prefix="/api")
     app.include_router(materials.router, prefix="/api")
 
     @app.get("/api/health", response_model=HealthOut)

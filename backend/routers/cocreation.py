@@ -1,7 +1,7 @@
-"""企业共创视频:成员基于企业模版、用企业主的网关密钥生成视频。
+"""企业共创视频:C 端用户凭临时授权使用企业模版和企业主网关密钥生成视频。
 
-可见性:企业认证通过 + 成员关系启用 + 企业配置了启用模版 + 服务端已配置共创网关。
-次数限制:每用户非失败的共创任务数上限(默认 3,见 settings.cocreation_max_videos_per_user)。
+可见性:临时授权有效 + 企业认证通过 + 企业配置了启用模版 + 服务端已配置共创网关。
+次数限制:按授权记录视频提交次数，内容删除或任务失败不返还。
 互动剧本:模版可绑定企业 IP 形象参考图与特征文字;成员上传照片后先合成
 「合拍首帧」,确认(或模版设为自动)后以首帧为起点图生视频。
 """
@@ -16,7 +16,13 @@ from sqlalchemy.orm import Session
 
 from .. import media, storage
 from ..database import get_db
-from ..models import Creation, EnterpriseVideoTemplate, User
+from ..models import (
+    Creation,
+    Enterprise,
+    EnterpriseConsumerGrant,
+    EnterpriseVideoTemplate,
+    User,
+)
 from ..schemas import (
     CoCreationExpandIn,
     CoCreationFirstFrameIn,
@@ -27,7 +33,7 @@ from ..schemas import (
     CreationOut,
     ExpandOut,
 )
-from ..services import cocreation
+from ..services import cocreation, enterprise_access
 from ..services.ai_client import AICallError, AIClient
 from ..services.pipeline import ACTIVE_STATUSES, IMAGE_MIME_BY_EXT, start_creation_thread
 from ..settings import settings
@@ -37,7 +43,9 @@ from .creations import _to_out
 router = APIRouter(tags=["cocreation"])
 
 
-def _co_template_out(db: Session, template: EnterpriseVideoTemplate) -> CoCreationTemplateOut:
+def _co_template_out(
+    db: Session, template: EnterpriseVideoTemplate, grant_id: int
+) -> CoCreationTemplateOut:
     """成员端模版视图:附带绑定素材的派生信息(封面地址、形象参考图数量)。"""
     bindings = cocreation.template_bindings(db, template.id)
     has_cover = any(b.binding.usage == "cover" for b in bindings)
@@ -49,38 +57,69 @@ def _co_template_out(db: Session, template: EnterpriseVideoTemplate) -> CoCreati
     data["character_asset_count"] = sum(
         1 for b in bindings if b.binding.usage == "character_reference"
     )
-    data["cover_url"] = f"/api/cocreation/templates/{template.id}/cover" if has_cover else None
+    data["cover_url"] = (
+        f"/api/cocreation/templates/{template.id}/cover?grant_id={grant_id}"
+        if has_cover
+        else None
+    )
+    data["can_expand"] = bool(template.chat_model)
     return CoCreationTemplateOut(**data)
 
 
-def _status_out(db: Session, user: User) -> CoCreationStatusOut:
-    limit = settings.cocreation_max_videos_per_user
+def _status_out(
+    db: Session, user: User, grant_id: int | None
+) -> CoCreationStatusOut:
     if not cocreation.cocreation_gateway_ready():
         return CoCreationStatusOut(available=False, reason="平台尚未开启企业共创服务")
-    context = cocreation.cocreation_context(db, user.id)
-    if context is None:
+    if grant_id is None:
         return CoCreationStatusOut(
-            available=False, reason="企业认证通过后才能参与共创"
+            available=False, reason="请从企业专属入口申请共创授权"
         )
-    templates = cocreation.list_templates(db, context.enterprise.id)
+    grant = db.get(EnterpriseConsumerGrant, grant_id)
+    if grant is None or grant.user_id != user.id:
+        return CoCreationStatusOut(available=False, reason="企业共创授权不存在")
+    status = enterprise_access.refresh_grant_status(grant)
+    enterprise = db.get(Enterprise, grant.enterprise_id)
+    if enterprise is None or enterprise.status != "approved":
+        return CoCreationStatusOut(available=False, reason="企业共创服务当前不可用")
+    db.commit()
+    templates = cocreation.list_templates(db, enterprise.id)
     if not templates:
         return CoCreationStatusOut(
-            available=False, reason="企业还没有配置共创视频模版"
+            available=False,
+            reason="企业还没有配置共创视频模版",
+            grant_id=grant.id,
+            enterprise_name=enterprise.name,
+            expires_at=grant.expires_at,
+            used=grant.video_used,
+            limit=grant.video_limit,
         )
-    used = cocreation.used_video_count(db, user.id, context.enterprise.id)
+    reasons = {
+        "pending": "共创授权正在等待企业确认",
+        "expired": "本次共创授权已到期",
+        "exhausted": "本次共创视频次数已用完",
+        "revoked": "企业已撤销本次共创授权",
+        "rejected": "企业未通过本次共创申请",
+    }
     return CoCreationStatusOut(
-        available=True,
-        templates=[_co_template_out(db, t) for t in templates],
-        used=used,
-        limit=limit,
+        available=status == "active",
+        reason=reasons.get(status, ""),
+        templates=[_co_template_out(db, t, grant.id) for t in templates],
+        used=grant.video_used,
+        limit=grant.video_limit,
+        grant_id=grant.id,
+        enterprise_name=enterprise.name,
+        expires_at=grant.expires_at,
     )
 
 
 @router.get("/cocreation/status", response_model=CoCreationStatusOut)
 def cocreation_status(
-    db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    grant_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    return _status_out(db, user)
+    return _status_out(db, user, grant_id)
 
 
 def _member_media_path(user: User, image_path: str | None) -> str | None:
@@ -107,9 +146,7 @@ def cocreation_first_frame(
     """合拍首帧合成:成员照片 + 企业 IP 形象参考图 → 同框互动首帧(用企业网关密钥)。"""
     if not cocreation.cocreation_gateway_ready():
         raise HTTPException(403, "平台尚未开启企业共创服务")
-    context = cocreation.cocreation_context(db, user.id)
-    if context is None:
-        raise HTTPException(403, "企业认证通过后才能使用共创服务")
+    context = cocreation.cocreation_context(db, user, payload.grant_id)
     template = cocreation.get_template(db, context.enterprise.id, payload.template_id)
     if template is None or not template.is_active:
         raise HTTPException(404, "视频模版不存在或已停用")
@@ -151,13 +188,12 @@ def cocreation_first_frame(
 @router.get("/cocreation/templates/{template_id}/cover")
 def cocreation_template_cover(
     template_id: int,
+    grant_id: int | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """模版封面(企业素材不进公开媒体目录,由成员鉴权后按绑定读取)。"""
-    context = cocreation.cocreation_context(db, user.id)
-    if context is None:
-        raise HTTPException(403, "企业认证通过后才能使用共创服务")
+    context = cocreation.cocreation_context(db, user, grant_id)
     template = cocreation.get_template(db, context.enterprise.id, template_id)
     if template is None or not template.is_active:
         raise HTTPException(404, "视频模版不存在或已停用")
@@ -182,9 +218,7 @@ def cocreation_expand(
     user: User = Depends(get_current_user),
 ):
     """用企业主的网关密钥做 AI 文本拓展(模版配置了 chat_model 才可用)。"""
-    context = cocreation.cocreation_context(db, user.id)
-    if context is None:
-        raise HTTPException(403, "企业认证通过后才能使用共创服务")
+    context = cocreation.cocreation_context(db, user, payload.grant_id)
     template = cocreation.get_template(db, context.enterprise.id, payload.template_id)
     if template is None or not template.is_active:
         raise HTTPException(404, "视频模版不存在或已停用")
@@ -214,9 +248,7 @@ def create_cocreation_video(
 ):
     if not cocreation.cocreation_gateway_ready():
         raise HTTPException(403, "平台尚未开启企业共创服务")
-    context = cocreation.cocreation_context(db, user.id)
-    if context is None:
-        raise HTTPException(403, "企业认证通过后才能使用共创服务")
+    context = cocreation.cocreation_context(db, user, payload.grant_id)
     template = cocreation.get_template(db, context.enterprise.id, payload.template_id)
     if template is None or not template.is_active:
         raise HTTPException(404, "视频模版不存在或已停用")
@@ -226,14 +258,6 @@ def create_cocreation_video(
     first_frame = _member_media_path(user, payload.first_frame_path)
     if template.member_photo == "required" and first_frame is None:
         raise HTTPException(422, "本模版需要出镜,请先上传照片并合成合拍画面")
-
-    used = cocreation.used_video_count(db, user.id, context.enterprise.id)
-    if used >= settings.cocreation_max_videos_per_user:
-        raise HTTPException(
-            409,
-            f"共创次数已用完(每人限 {settings.cocreation_max_videos_per_user} 个可保留视频)"
-            ",可在历史记录中删除不需要的共创视频后重试",
-        )
 
     # 与个人创作共用"同用户同时只有一个生成中任务"的约束
     active = db.scalars(
@@ -269,9 +293,17 @@ def create_cocreation_video(
         template_id=template.id,
         template_name=template.name,
         cocreation_materials=cocreation.material_snapshot(db, template.id),
+        enterprise_grant_id=context.grant.id,
     )
     db.add(creation)
     try:
+        db.flush()
+        enterprise_access.consume_video_grant(
+            db,
+            user=user,
+            grant_id=context.grant.id,
+            creation_id=creation.id,
+        )
         db.commit()
     except IntegrityError:
         # 并发提交竞态由 (user_id, active) 部分唯一索引兜底

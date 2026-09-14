@@ -3,6 +3,7 @@ import type {
   Enterprise,
   EnterpriseAsset,
   EnterpriseEntry,
+  EnterpriseConsumerGrant,
   EnterpriseForm,
   OpsProfile,
   PlatformAdmin,
@@ -125,13 +126,39 @@ export const getEnterpriseEntry = () =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry");
 export const createEnterpriseEntry = () =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", { method: "POST" });
-export const updateEnterpriseEntry = (payload: { auto_join: boolean }) =>
+export const updateEnterpriseEntry = (payload: {
+  grant_ttl_hours?: number;
+  video_limit?: number;
+}) =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
 export const disableEnterpriseEntry = () =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", { method: "DELETE" });
+
+export const listCocreationGrants = () =>
+  request<EnterpriseConsumerGrant[]>("/api/ops/v1/cocreation-grants");
+export const approveCocreationGrant = (id: number) =>
+  request<EnterpriseConsumerGrant>(
+    `/api/ops/v1/cocreation-grants/${id}/approve`,
+    json("POST", {}),
+  );
+export const rejectCocreationGrant = (id: number, reason = "") =>
+  request<EnterpriseConsumerGrant>(
+    `/api/ops/v1/cocreation-grants/${id}/reject`,
+    json("POST", { reason }),
+  );
+export const revokeCocreationGrant = (id: number, reason = "") =>
+  request<EnterpriseConsumerGrant>(
+    `/api/ops/v1/cocreation-grants/${id}/revoke`,
+    json("POST", { reason }),
+  );
+export const renewCocreationGrant = (id: number) =>
+  request<EnterpriseConsumerGrant>(
+    `/api/ops/v1/cocreation-grants/${id}/renew`,
+    json("POST", {}),
+  );
 
 export const listEnterprises = (status = "all") =>
   request<Enterprise[]>(

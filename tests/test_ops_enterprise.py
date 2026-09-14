@@ -136,24 +136,29 @@ def test_enterprise_entry_is_owner_bound_and_old_member_routes_are_removed() -> 
         assert created_body["entry_url"].startswith("http://127.0.0.1:5173/")
         token = parse_qs(urlparse(created_body["entry_url"]).query)["enterprise_entry"][0]
 
-        resolved = client.post(
-            "/api/enterprise-entry/resolve",
-            json={"token": token},
-            headers=_headers("owner-a"),
-        )
-        assert resolved.status_code == 200
-        assert resolved.json() == {
+        preview = client.get(f"/api/enterprise-entry/preview?token={token}")
+        assert preview.status_code == 200
+        assert preview.json()["enterprise_id"] == enterprise_id
+        assert created_body["auto_approve"] is True
+        assert client.get(
+            "/api/enterprise-entry/context", headers=_headers("owner-a")
+        ).json() == {
             "enterprise_id": enterprise_id,
             "enterprise_name": "测试企业ENTRY-A",
         }
-        assert client.get(
-            "/api/enterprise-entry/context", headers=_headers("owner-a")
-        ).json() == resolved.json()
-        assert client.post(
-            "/api/enterprise-entry/resolve",
-            json={"token": token},
-            headers=_headers("owner-b"),
-        ).status_code == 403
+
+        granted = client.post(
+            "/api/enterprise-entry/apply",
+            json={
+                "token": token,
+                "accepted": True,
+                "terms_version": preview.json()["terms_version"],
+                "privacy_version": preview.json()["privacy_version"],
+            },
+            headers=_headers("visitor-entry"),
+        )
+        assert granted.status_code == 200
+        assert granted.json()["enterprise_id"] == enterprise_id
 
         rotated = client.post(
             "/api/ops/v1/enterprise-entry", headers=_headers("owner-a")
@@ -162,21 +167,15 @@ def test_enterprise_entry_is_owner_bound_and_old_member_routes_are_removed() -> 
             "enterprise_entry"
         ][0]
         assert rotated_token != token
-        assert client.post(
-            "/api/enterprise-entry/resolve",
-            json={"token": token},
-            headers=_headers("owner-a"),
-        ).status_code == 404
+        assert client.get(f"/api/enterprise-entry/preview?token={token}").status_code == 404
 
         disabled = client.delete(
             "/api/ops/v1/enterprise-entry", headers=_headers("owner-a")
         )
         assert disabled.status_code == 200
         assert disabled.json()["active"] is False
-        assert client.post(
-            "/api/enterprise-entry/resolve",
-            json={"token": rotated_token},
-            headers=_headers("owner-a"),
+        assert client.get(
+            f"/api/enterprise-entry/preview?token={rotated_token}"
         ).status_code == 404
 
 

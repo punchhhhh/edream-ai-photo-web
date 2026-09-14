@@ -172,11 +172,7 @@ class EnterpriseMembership(Base):
 
 
 class EnterpriseEntryToken(Base):
-    """企业专属业务入口；Token 只用于定位企业，Owner 仍须校验成员关系。
-
-    auto_join 打开后，任何登录用户通过链接访问即自动成为企业成员
-    (role=member, status=active)，无需企业二次确认，即可使用共创能力。
-    """
+    """企业专属业务入口；Token 只定位企业，实际能力由临时 Grant 授予。"""
 
     __tablename__ = "enterprise_entry_tokens"
 
@@ -186,8 +182,13 @@ class EnterpriseEntryToken(Base):
     )
     token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
-    # 链接访客自动加入企业(共创等成员能力随之开放);关闭后仅 Owner 可用链接定位企业
-    auto_join: Mapped[bool] = mapped_column(Boolean, default=False)
+    # auto / manual
+    approval_mode: Mapped[str] = mapped_column(String(20), default="auto")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    grant_ttl_hours: Mapped[int] = mapped_column(Integer, default=24)
+    video_limit: Mapped[int] = mapped_column(Integer, default=3)
+    terms_version: Mapped[str] = mapped_column(String(40), default="2026-09-v1")
+    privacy_version: Mapped[str] = mapped_column(String(40), default="2026-09-v1")
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -195,6 +196,80 @@ class EnterpriseEntryToken(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class EnterpriseConsumerGrant(Base):
+    """C 端用户使用企业共创能力的临时授权，不代表企业成员身份。"""
+
+    __tablename__ = "enterprise_consumer_grants"
+    __table_args__ = (
+        Index(
+            "uq_enterprise_consumer_grant_current",
+            "entry_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'active')"),
+            sqlite_where=text("status IN ('pending', 'active')"),
+        ),
+        Index("ix_enterprise_consumer_grant_enterprise_status", "enterprise_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="CASCADE"), index=True
+    )
+    entry_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprise_entry_tokens.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # pending / active / exhausted / expired / revoked / rejected
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    approval_mode: Mapped[str] = mapped_column(String(20), default="auto")
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    video_limit: Mapped[int] = mapped_column(Integer, default=3)
+    video_used: Mapped[int] = mapped_column(Integer, default=0)
+    terms_version: Mapped[str] = mapped_column(String(40), default="")
+    privacy_version: Mapped[str] = mapped_column(String(40), default="")
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_reason: Mapped[str] = mapped_column(Text, default="")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnterpriseCocreationUsageLedger(Base):
+    """企业共创视频提交流水；内容删除不会删除或回退本流水。"""
+
+    __tablename__ = "enterprise_cocreation_usage_ledger"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="CASCADE"), index=True
+    )
+    grant_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprise_consumer_grants.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    creation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("creations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    operation_type: Mapped[str] = mapped_column(String(30))
+    amount: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="committed")
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PlatformUserRole(Base):
@@ -472,6 +547,9 @@ class Creation(Base):
     template_name: Mapped[str] = mapped_column(String(100), default="")
     # 共创素材快照:[{asset_id, version_id, usage, name}],记录本次生成实际使用的素材版本
     cocreation_materials: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    enterprise_grant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enterprise_consumer_grants.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

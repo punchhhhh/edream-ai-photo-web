@@ -50,6 +50,11 @@ def test_mask_secret_hides_middle() -> None:
     assert "secret" not in mask_secret("sk-secret-key-abcdef")
 
 
+def test_login_next_keeps_enterprise_entry_query() -> None:
+    path = "/?enterprise_entry=abc123&source=qr"
+    assert auth_routes._safe_next(path) == path
+
+
 # ---------------------------------------------------------------- 接口集成
 
 @pytest.fixture()

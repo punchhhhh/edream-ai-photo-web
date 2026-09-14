@@ -23,6 +23,7 @@ import {
 import QRCode from "qrcode";
 import {
   addPlatformAdmin,
+  approveCocreationGrant,
   applyEnterprise,
   cancelEnterprise,
   changeEnterpriseStatus,
@@ -32,16 +33,21 @@ import {
   fetchOpsProfile,
   getEnterpriseEntry,
   getEnterpriseQuota,
+  listCocreationGrants,
   listEnterprises,
   listPlatformAdmins,
   logoutOps,
   reviewEnterprise,
+  rejectCocreationGrant,
+  renewCocreationGrant,
+  revokeCocreationGrant,
   updateEnterprise,
   updateEnterpriseEntry,
   updateEnterpriseQuota,
 } from "./api";
 import type {
   Enterprise,
+  EnterpriseConsumerGrant,
   EnterpriseEntry,
   EnterpriseForm,
   OpsProfile,
@@ -298,13 +304,21 @@ function CertificationView({
 
 function EnterpriseEntryView() {
   const [entry, setEntry] = useState<EnterpriseEntry | null>(null);
+  const [grants, setGrants] = useState<EnterpriseConsumerGrant[]>([]);
   const [qrCode, setQrCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+  const [grantHours, setGrantHours] = useState(24);
+  const [videoLimit, setVideoLimit] = useState(3);
   const load = useCallback(async () => {
     try {
-      setEntry(await getEnterpriseEntry());
+      const [entryData, grantRows] = await Promise.all([
+        getEnterpriseEntry(),
+        listCocreationGrants(),
+      ]);
+      setEntry(entryData);
+      setGrants(grantRows);
       setError("");
     } catch (err) {
       setError(errorMessage(err));
@@ -313,6 +327,12 @@ function EnterpriseEntryView() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!entry) return;
+    setGrantHours(entry.grant_ttl_hours);
+    setVideoLimit(entry.video_limit);
+  }, [entry]);
 
   useEffect(() => {
     if (!entry?.active || !entry.entry_url) {
@@ -347,18 +367,42 @@ function EnterpriseEntryView() {
     }
   };
 
-  const toggleAutoJoin = async (autoJoin: boolean) => {
-    if (
-      autoJoin &&
-      !window.confirm(
-        "开启后，任何拿到链接的登录用户都会自动加入企业并使用共创额度，确定继续吗？"
-      )
-    )
-      return;
+  const savePolicy = async () => {
     setBusy(true);
     setError("");
     try {
-      setEntry(await updateEnterpriseEntry({ auto_join: autoJoin }));
+      setEntry(
+        await updateEnterpriseEntry({
+          grant_ttl_hours: grantHours,
+          video_limit: videoLimit,
+        }),
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateGrant = async (
+    grant: EnterpriseConsumerGrant,
+    action: "approve" | "reject" | "revoke" | "renew",
+  ) => {
+    setBusy(true);
+    setError("");
+    try {
+      let updated: EnterpriseConsumerGrant;
+      if (action === "approve") updated = await approveCocreationGrant(grant.id);
+      else if (action === "reject") {
+        updated = await rejectCocreationGrant(
+          grant.id,
+          window.prompt("拒绝原因（选填）") ?? "",
+        );
+      } else if (action === "revoke") {
+        if (!window.confirm("撤销后该用户将不能继续使用本次授权，确定继续吗？")) return;
+        updated = await revokeCocreationGrant(grant.id);
+      } else updated = await renewCocreationGrant(grant.id);
+      setGrants((rows) => rows.map((row) => (row.id === updated.id ? updated : row)));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -386,7 +430,7 @@ function EnterpriseEntryView() {
       <div className="ops-section-head">
         <div>
           <h2>企业入口</h2>
-          <p>为当前企业生成专属分享链接；可开启自动加入，链接访客免确认成为成员并使用共创</p>
+          <p>分享给 C 端用户；用户登录并同意说明后自动获得限时共创授权</p>
         </div>
       </div>
       {error && <div className="ops-alert error">{error}</div>}
@@ -432,27 +476,34 @@ function EnterpriseEntryView() {
                   打开
                 </a>
               </div>
-              <div className="entry-auto-join">
-                <label className="entry-auto-join-toggle">
+              <div className="entry-grant-policy">
+                <label>
+                  授权有效期（小时）
                   <input
-                    type="checkbox"
-                    checked={entry.auto_join}
-                    disabled={busy}
-                    onChange={(e) => void toggleAutoJoin(e.target.checked)}
+                    type="number"
+                    min={1}
+                    max={720}
+                    value={grantHours}
+                    onChange={(event) => setGrantHours(Number(event.target.value))}
                   />
-                  <span>
-                    自动加入
-                    <small>
-                      开启后，通过链接访问的登录用户自动加入企业，无需二次确认，
-                      即可使用共创;关闭后链接仅对 Owner 定位企业有效。
-                    </small>
-                  </span>
                 </label>
+                <label>
+                  每次授权视频数
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={videoLimit}
+                    onChange={(event) => setVideoLimit(Number(event.target.value))}
+                  />
+                </label>
+                <button type="button" onClick={() => void savePolicy()} disabled={busy}>
+                  保存限制
+                </button>
               </div>
               <p className="entry-security-note">
-                {entry.auto_join
-                  ? "自动加入已开启：链接即成员入口，请只分发给目标社群；成员的共创次数与首帧合成仍受平台限额约束。"
-                  : "链接用于识别企业；未开启自动加入时，访问账号必须是该企业已认证的 Owner。"}
+                自动审批已开启。链接访客不会成为企业成员，只会获得当前企业的临时共创授权；
+                授权到期或次数用完后需重新申请。
               </p>
               <div className="entry-actions">
                 <button onClick={() => void generate()} disabled={busy}>
@@ -472,7 +523,7 @@ function EnterpriseEntryView() {
             <div className="entry-empty-state">
               <Link2 size={26} />
               <strong>生成企业专属业务入口</strong>
-              <span>生成后可复制链接或下载二维码，提供给企业唯一账号使用。</span>
+              <span>生成后可复制链接或下载二维码，分享给需要参与共创的用户。</span>
               <button className="primary" onClick={() => void generate()} disabled={busy}>
                 <Link2 size={16} />
                 {busy ? "生成中..." : "生成入口"}
@@ -500,6 +551,69 @@ function EnterpriseEntryView() {
               <span>生成入口后显示</span>
             </div>
           )}
+        </div>
+      </div>
+      <div className="entry-grants-section">
+        <div className="ops-section-head">
+          <div>
+            <h3>共创授权</h3>
+            <p>查看 C 端用户的授权状态、有效期和视频用量</p>
+          </div>
+          <span>{grants.length} 条记录</span>
+        </div>
+        <div className="ops-table-wrap">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th>用户</th>
+                <th>状态</th>
+                <th>视频用量</th>
+                <th>到期时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {grants.map((grant) => (
+                <tr key={grant.id}>
+                  <td>
+                    <strong>{grant.display_name || grant.email || grant.oauth_sub}</strong>
+                    <small>{grant.email || grant.oauth_sub}</small>
+                  </td>
+                  <td>
+                    <span className={`ops-badge status-${grant.status}`}>
+                      {{
+                        pending: "待确认",
+                        active: "有效",
+                        expired: "已到期",
+                        exhausted: "次数用完",
+                        revoked: "已撤销",
+                        rejected: "已拒绝",
+                      }[grant.status]}
+                    </span>
+                  </td>
+                  <td>{grant.video_used} / {grant.video_limit}</td>
+                  <td>{grant.expires_at ? formatDate(grant.expires_at) : "-"}</td>
+                  <td>
+                    <div className="table-actions">
+                      {grant.status === "pending" && (
+                        <>
+                          <button onClick={() => void updateGrant(grant, "approve")} disabled={busy}>通过</button>
+                          <button className="danger-text-button" onClick={() => void updateGrant(grant, "reject")} disabled={busy}>拒绝</button>
+                        </>
+                      )}
+                      {grant.status === "active" && (
+                        <button className="danger-text-button" onClick={() => void updateGrant(grant, "revoke")} disabled={busy}>撤销</button>
+                      )}
+                      {["expired", "exhausted", "revoked"].includes(grant.status) && (
+                        <button onClick={() => void updateGrant(grant, "renew")} disabled={busy}>续期</button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!grants.length && <div className="empty-row">还没有 C 端用户申请共创授权</div>}
         </div>
       </div>
     </section>

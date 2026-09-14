@@ -63,7 +63,6 @@ def _ensure_vlog_transition_schema() -> None:
         for statement in statements:
             connection.execute(text(statement))
 
-
 def _ensure_enterprise_schema() -> None:
     """补齐运营平台一期字段。这里只做可向前兼容的加列，复杂迁移后续交给 Alembic。"""
     inspector = inspect(engine)
@@ -113,13 +112,28 @@ def _ensure_enterprise_schema() -> None:
             entry_columns = {
                 column["name"] for column in inspector.get_columns("enterprise_entry_tokens")
             }
-            if "auto_join" not in entry_columns:
-                statements.append(
-                    "ALTER TABLE enterprise_entry_tokens ADD COLUMN auto_join BOOLEAN NOT NULL DEFAULT FALSE"
-                )
+            entry_additions = {
+                "approval_mode": "VARCHAR(20) NOT NULL DEFAULT 'auto'",
+                "expires_at": "TIMESTAMP",
+                "grant_ttl_hours": "INTEGER NOT NULL DEFAULT 24",
+                "video_limit": "INTEGER NOT NULL DEFAULT 3",
+                "terms_version": "VARCHAR(40) NOT NULL DEFAULT '2026-09-v1'",
+                "privacy_version": "VARCHAR(40) NOT NULL DEFAULT '2026-09-v1'",
+            }
+            for name, ddl in entry_additions.items():
+                if name not in entry_columns:
+                    statements.append(
+                        f"ALTER TABLE enterprise_entry_tokens ADD COLUMN {name} {ddl}"
+                    )
 
         for statement in statements:
             connection.execute(text(statement))
+
+        if "enterprise_entry_tokens" in tables:
+            # 一期入口统一自动审批，不保留旧业务模式分支。
+            connection.execute(
+                text("UPDATE enterprise_entry_tokens SET approval_mode='auto'")
+            )
 
         if should_backfill_asset_content_type:
             connection.execute(
@@ -239,6 +253,8 @@ def _ensure_cocreation_schema() -> None:
         statements.append(
             f"ALTER TABLE creations ADD COLUMN cocreation_materials JSON NOT NULL DEFAULT {default}"
         )
+    if "enterprise_grant_id" not in columns:
+        statements.append("ALTER TABLE creations ADD COLUMN enterprise_grant_id INTEGER")
 
     if "enterprise_video_templates" in inspector.get_table_names():
         template_columns = {

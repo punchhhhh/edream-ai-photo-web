@@ -1,5 +1,5 @@
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
@@ -23,6 +23,7 @@ from ..models import (
 from ..routers.auth import get_current_user
 from ..schemas import AuthUserOut
 from ..settings import settings
+from ..services import enterprise_access
 from .access import (
     is_platform_admin,
     membership_for_user,
@@ -246,7 +247,7 @@ def _entry_out(
     enterprise: Enterprise,
     entry: EnterpriseEntryToken | None,
 ) -> EnterpriseEntryOut:
-    active = entry is not None and entry.status == "active"
+    active = entry is not None and enterprise_access.entry_is_available(entry)
     entry_url = None
     if active:
         origin = settings.enterprise_business_base_url.strip().rstrip("/")
@@ -266,7 +267,12 @@ def _entry_out(
         enterprise_id=enterprise.id,
         enterprise_name=enterprise.name,
         active=active,
-        auto_join=bool(entry.auto_join) if entry else False,
+        auto_approve=(entry.approval_mode == "auto") if entry else True,
+        expires_at=entry.expires_at if entry else None,
+        grant_ttl_hours=(entry.grant_ttl_hours if entry else settings.cocreation_grant_ttl_hours),
+        video_limit=(entry.video_limit if entry else settings.cocreation_max_videos_per_user),
+        terms_version=(entry.terms_version if entry else settings.cocreation_terms_version),
+        privacy_version=(entry.privacy_version if entry else settings.cocreation_privacy_version),
         entry_url=entry_url,
         created_at=entry.created_at if entry else None,
         updated_at=entry.updated_at if entry else None,
@@ -306,12 +312,23 @@ def create_enterprise_entry(
             enterprise_id=context.enterprise.id,
             token=token,
             status="active",
+            approval_mode="auto",
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(days=settings.cocreation_entry_ttl_days),
+            grant_ttl_hours=settings.cocreation_grant_ttl_hours,
+            video_limit=settings.cocreation_max_videos_per_user,
+            terms_version=settings.cocreation_terms_version,
+            privacy_version=settings.cocreation_privacy_version,
             created_by_user_id=user.id,
         )
         db.add(entry)
     else:
         entry.token = token
         entry.status = "active"
+        entry.approval_mode = "auto"
+        entry.expires_at = datetime.now(timezone.utc) + timedelta(
+            days=settings.cocreation_entry_ttl_days
+        )
         entry.created_by_user_id = user.id
     db.flush()
     audit(
@@ -334,7 +351,7 @@ def update_enterprise_entry(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """调整入口行为(如自动加入);不轮换 token,已分发的链接保持有效。"""
+    """调整共创授权有效期和视频次数，不轮换已分发的入口。"""
     context = require_enterprise(db, user, roles={"owner"})
     entry = db.scalar(
         select(EnterpriseEntryToken).where(
@@ -343,7 +360,9 @@ def update_enterprise_entry(
     )
     if entry is None or entry.status != "active":
         raise HTTPException(404, "尚未生成企业入口,请先生成再配置")
-    entry.auto_join = payload.auto_join
+    changes = payload.model_dump(exclude_unset=True, exclude_none=True)
+    for field, value in changes.items():
+        setattr(entry, field, value)
     audit(
         db,
         user=user,
@@ -351,7 +370,7 @@ def update_enterprise_entry(
         action="enterprise.entry.update",
         resource_type="enterprise_entry",
         resource_id=entry.id,
-        details={"auto_join": payload.auto_join},
+        details=changes,
     )
     db.commit()
     db.refresh(entry)

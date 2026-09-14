@@ -43,6 +43,7 @@ tests/                   pytest(认证/隔离/并发限制/安全加固/重启�
 DEPLOY.md                生产部署手册(studio.ymmjc.com:发布/回滚/COS 迁移/运维)
 OPS.md                   企业素材运营平台设计与验收说明
 docs/enterprise-material-integration.md  主业务接入企业素材指南
+docs/enterprise-consumer-authorization-design.md  企业 C 端共创授权、登录与隐私确认设计
 main.py                  uvicorn 启动入口
 ```
 

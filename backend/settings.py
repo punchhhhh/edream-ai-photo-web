@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     cocreation_max_videos_per_user: int = 3
     # 每个成员每天可合成的合拍首帧上限(不占视频配额但消耗企业网关额度);0 = 不限
     cocreation_first_frame_daily_limit: int = 30
+    cocreation_entry_ttl_days: int = 30
+    cocreation_grant_ttl_hours: int = 24
+    cocreation_terms_version: str = "2026-09-v1"
+    cocreation_privacy_version: str = "2026-09-v1"
 
     # 跨域来源,逗号分隔;生产部署改为实际的前端域名
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173"
