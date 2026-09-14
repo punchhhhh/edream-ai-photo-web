@@ -75,6 +75,12 @@ function parseOptions(raw: string): string[] {
     .slice(0, 8);
 }
 
+function videoProviderLabel(provider: VideoTemplateForm["video_provider"]) {
+  return provider === "openai_videos"
+    ? "Sora 风格 · /v1/videos"
+    : "任务式 · /v1/video/generations";
+}
+
 function TemplateForm({
   initial,
   onSave,
@@ -178,6 +184,9 @@ function TemplateForm({
     () => modelCatalog?.models.filter((model) => model.kind === "video") ?? [],
     [modelCatalog],
   );
+  const resolvedVideoProvider =
+    videoModels.find((model) => model.id === form.video_model)?.video_provider ??
+    form.video_provider;
 
   const set = <K extends keyof VideoTemplateForm>(key: K, value: VideoTemplateForm[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -406,7 +415,10 @@ function TemplateForm({
             setBusy(true);
             setError("");
             try {
-              await onSave({ ...form, assets: buildAssets() }, initial.id);
+              await onSave(
+                { ...form, video_provider: resolvedVideoProvider, assets: buildAssets() },
+                initial.id,
+              );
               onClose();
             } catch (err) {
               setError(errorMessage(err));
@@ -566,14 +578,7 @@ function TemplateForm({
           })}
           <label>
             接口风格（自动匹配）
-            <input
-              readOnly
-              value={
-                form.video_provider === "openai_videos"
-                  ? "Sora 风格 · /v1/videos"
-                  : "任务式 · /v1/video/generations"
-              }
-            />
+            <span className="provider-readonly">{videoProviderLabel(resolvedVideoProvider)}</span>
           </label>
           <label>
             时长(秒)

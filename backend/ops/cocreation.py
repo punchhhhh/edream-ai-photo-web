@@ -35,6 +35,22 @@ from .service import audit
 router = APIRouter(prefix="/ops/v1", tags=["ops-cocreation"])
 
 
+def _resolve_video_provider_for_model(user: User, model_id: str) -> str:
+    """Infer the business video endpoint style from the user's NewAPI model catalog."""
+    model_id = (model_id or "").strip()
+    if not model_id:
+        return "video_generations"
+    try:
+        models = newapi_internal.list_user_models(user.oauth_sub)
+    except NewApiInternalError:
+        # Keep a deterministic local fallback if the internal catalog is temporarily unavailable.
+        return "openai_videos" if model_id.lower().startswith("wan3_") else "video_generations"
+    for model in models:
+        if model.id == model_id and model.kind == "video":
+            return model.video_provider or "video_generations"
+    return "openai_videos" if model_id.lower().startswith("wan3_") else "video_generations"
+
+
 @router.get("/new-api-models", response_model=NewApiModelsOut)
 def list_new_api_models(
     db: Session = Depends(get_db), user: User = Depends(get_current_user)
@@ -178,6 +194,7 @@ def create_video_template(
 ):
     context = require_enterprise(db, user, roles=EDIT_ROLES)
     fields = payload.model_dump(exclude={"assets"})
+    fields["video_provider"] = _resolve_video_provider_for_model(user, fields.get("video_model", ""))
     template = EnterpriseVideoTemplate(
         enterprise_id=context.enterprise.id,
         created_by_user_id=user.id,
@@ -214,6 +231,8 @@ def update_video_template(
     context = require_enterprise(db, user, roles=EDIT_ROLES)
     template = _template_for_enterprise(db, context.enterprise.id, template_id)
     changes = payload.model_dump(exclude_unset=True, exclude_none=True, exclude={"assets"})
+    model_id = changes.get("video_model", template.video_model)
+    changes["video_provider"] = _resolve_video_provider_for_model(user, model_id)
     for field, value in changes.items():
         setattr(template, field, value)
     if payload.assets is not None:

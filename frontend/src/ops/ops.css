@@ -1,13 +1,15 @@
 :root {
-  --ops-ink: #18211f;
-  --ops-muted: #68736f;
-  --ops-line: #d9dfdc;
-  --ops-soft: #f3f6f4;
+  --ops-ink: #1d2a26;
+  --ops-muted: #61716b;
+  --ops-line: #d9e1dd;
+  --ops-soft: #f5f8f7;
+  --ops-surface: #ffffff;
+  --ops-page: #f7f9f8;
   --ops-green: #13735f;
-  --ops-green-dark: #0b5949;
-  --ops-blue: #356f9f;
-  --ops-amber: #a86f18;
-  --ops-coral: #c24d3c;
+  --ops-green-dark: #0c5d4d;
+  --ops-blue: #2f6f9f;
+  --ops-amber: #9a6616;
+  --ops-coral: #b94738;
 }
 
 * {
@@ -16,7 +18,7 @@
 body {
   margin: 0;
   color: var(--ops-ink);
-  background: #f4f6f5;
+  background: var(--ops-page);
   font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
   letter-spacing: 0;
 }
@@ -77,6 +79,7 @@ a {
 
 .ops-shell {
   min-height: 100vh;
+  background: var(--ops-page);
 }
 .ops-header {
   position: sticky;
@@ -88,7 +91,7 @@ a {
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--ops-line);
-  background: #fff;
+  background: var(--ops-surface);
 }
 .ops-brand {
   display: flex;
@@ -162,7 +165,7 @@ a {
   flex-direction: column;
   gap: 4px;
   border-right: 1px solid var(--ops-line);
-  background: #fff;
+  background: var(--ops-surface);
 }
 .ops-nav-group {
   display: flex;
@@ -392,6 +395,18 @@ a {
   background: #fff;
   outline: none;
   resize: vertical;
+}
+.provider-readonly {
+  min-height: 38px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  border: 1px solid #cbd3cf;
+  border-radius: 5px;
+  color: #2f423c;
+  background: #f4f8f6;
+  font-size: 13px;
+  font-weight: 700;
 }
 .ops-form input:focus,
 .ops-form select:focus,
@@ -1151,7 +1166,8 @@ a {
   padding: 20px;
   display: grid;
   place-items: center;
-  background: rgba(19, 29, 26, 0.46);
+  background: rgba(237, 242, 240, 0.82);
+  backdrop-filter: blur(2px);
 }
 .ops-modal {
   width: min(680px, 100%);
@@ -1159,7 +1175,7 @@ a {
   overflow: auto;
   border-radius: 8px;
   background: #fff;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 22px 60px rgba(74, 90, 84, 0.22);
 }
 .ops-modal.small {
   width: min(480px, 100%);
@@ -1798,7 +1814,8 @@ a {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(237, 242, 240, 0.82);
+  backdrop-filter: blur(2px);
 }
 
 .asset-modal {

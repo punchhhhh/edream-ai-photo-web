@@ -336,7 +336,7 @@ def test_pipeline_resolves_owner_gateway_key(gateway_ready, monkeypatch) -> None
 
     captured: dict[str, str] = {}
 
-    def _fake_get_key(oidc_id: str) -> str:
+    def _fake_get_key(oidc_id: str, **kwargs) -> str:
         captured["oidc_id"] = oidc_id
         return "sk-system-key"
 
@@ -431,7 +431,7 @@ def test_pipeline_prefers_owner_default_config(gateway_ready, monkeypatch) -> No
         session.commit()
 
     monkeypatch.setattr(
-        newapi_internal, "get_user_system_key", lambda oidc_id: "sk-system-key"
+        newapi_internal, "get_user_system_key", lambda oidc_id, **kwargs: "sk-system-key"
     )
     with SessionLocal() as session:
         creation = session.get(Creation, creation_id)
@@ -606,6 +606,42 @@ def test_owner_can_fetch_newapi_model_catalog(gateway_ready, monkeypatch) -> Non
         assert forbidden.status_code == 403
 
 
+def test_video_template_provider_is_inferred_from_model(gateway_ready, monkeypatch) -> None:
+    from backend.app import create_app
+    from backend.services import newapi_internal
+
+    monkeypatch.setattr(
+        newapi_internal,
+        "list_user_models",
+        lambda _sub: [
+            newapi_internal.AvailableModel(
+                id="wan3_720p",
+                kind="video",
+                endpoint_types=("openai-video",),
+                video_provider="openai_videos",
+            )
+        ],
+    )
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-provider", "PROVIDER")
+        created = _create_template(
+            client,
+            "owner-provider",
+            video_model="wan3_720p",
+            video_provider="video_generations",
+        )
+        assert created["video_provider"] == "openai_videos"
+
+        updated = client.patch(
+            f"/api/ops/v1/video-templates/{created['id']}",
+            json={"video_provider": "video_generations"},
+            headers=_headers("owner-provider"),
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["video_provider"] == "openai_videos"
+
+
 def test_owner_sees_enterprise_videos(gateway_ready, monkeypatch) -> None:
     from backend.app import create_app
 
@@ -768,7 +804,9 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
     # owner 无默认模型配置时按 Casdoor 标识实时取 system 密钥,测试里 mock 掉
     from backend.services import newapi_internal
 
-    monkeypatch.setattr(newapi_internal, "get_user_system_key", lambda oidc_id: "sk-system-key")
+    monkeypatch.setattr(
+        newapi_internal, "get_user_system_key", lambda oidc_id, **kwargs: "sk-system-key"
+    )
 
     from backend.app import create_app
 
@@ -887,7 +925,9 @@ def test_first_frame_guardrails(gateway_ready, monkeypatch) -> None:
     # owner 无默认模型配置时按 Casdoor 标识实时取 system 密钥,测试里 mock 掉
     from backend.services import newapi_internal
 
-    monkeypatch.setattr(newapi_internal, "get_user_system_key", lambda oidc_id: "sk-system-key")
+    monkeypatch.setattr(
+        newapi_internal, "get_user_system_key", lambda oidc_id, **kwargs: "sk-system-key"
+    )
     monkeypatch.setattr(settings, "cocreation_first_frame_daily_limit", 2)
 
     from backend.services import cocreation as cocreation_service
