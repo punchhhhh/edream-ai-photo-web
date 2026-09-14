@@ -1629,6 +1629,138 @@ a {
   font-size: 12px;
 }
 
+/* ---- 表单内收起的素材选择:已选缩略图条 + 挑选小弹窗 ---- */
+.asset-selected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--ops-border, #d8dee9);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.asset-chip img,
+.asset-chip-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+}
+
+.asset-chip-icon {
+  display: grid;
+  place-items: center;
+  background: #eef1f6;
+  font-size: 13px;
+}
+
+.asset-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-chip button {
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: #8a94a3;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.asset-chip button:hover {
+  color: #b3403a;
+}
+
+.asset-add-btn {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border: 1px dashed #9fb5ad;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ops-green, #164e42);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.asset-add-btn:hover {
+  background: #f2f7f5;
+}
+
+.asset-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40; /* 盖在 ops-modal(30) 上面的挑选小弹窗 */
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.asset-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(720px, 94vw);
+  max-height: 82vh;
+  padding: 16px;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.asset-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.asset-modal-head button {
+  padding: 2px 8px;
+  border: none;
+  background: none;
+  font-size: 18px;
+  color: #6b7684;
+  cursor: pointer;
+}
+
+.asset-modal .asset-picker-options {
+  flex: 1;
+  max-height: none;
+  padding-right: 4px;
+}
+
+.asset-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #6b7684;
+  font-size: 12px;
+}
+
+.asset-modal-foot .primary {
+  padding: 7px 22px;
+  border: none;
+  border-radius: 8px;
+  background: var(--ops-green, #164e42);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 /* 勾选框不吃 .ops-form input 的通栏文本框样式(width:100%/min-height/padding/border) */
 .asset-card input[type="checkbox"],
 .asset-card input[type="radio"] {

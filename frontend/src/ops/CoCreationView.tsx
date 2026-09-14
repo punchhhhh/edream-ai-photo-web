@@ -98,6 +98,8 @@ function TemplateForm({
   const [coverId, setCoverId] = useState<number | null>(
     initial.form.assets.find((a) => a.usage === "cover")?.asset_id ?? null,
   );
+  // 当前打开的素材挑选小弹窗;表单本体只放已选缩略图,素材多时在弹窗里滚动挑
+  const [assetPicker, setAssetPicker] = useState<"character" | "text" | "cover" | null>(null);
 
   useEffect(() => {
     listEnterpriseAssets()
@@ -138,70 +140,148 @@ function TemplateForm({
       : []),
   ];
 
-  const renderPicker = (
-    title: string,
-    hint: string,
-    rows: EnterpriseAsset[],
-    checkedIds: number[],
+  const assetThumb = (row: EnterpriseAsset, className = "asset-card-thumb") => {
+    if (row.content_type === "image" && row.content_url) {
+      return (
+        <img className={className} src={row.content_url} alt={row.name} loading="lazy" />
+      );
+    }
+    if (row.content_type === "text") {
+      return (
+        <span className={`${className} text`}>
+          {(row.version.text_content ?? "").replace(/\s+/g, " ").trim().slice(0, 48) ||
+            "文字素材"}
+        </span>
+      );
+    }
+    return <span className={`${className} placeholder`}>🗂️</span>;
+  };
+
+  const assetCard = (
+    row: EnterpriseAsset,
+    checked: boolean,
     onToggle: (id: number) => void,
     single = false,
   ) => (
-    <div className="asset-picker span-2">
-      <strong>{title}</strong>
-      <small>{hint}</small>
-      {rows.length === 0 ? (
-        <small className="muted">素材库中还没有可用素材,请先到「企业素材」上传</small>
-      ) : (
-        <div className="asset-picker-options">
-          {rows.map((row) => {
-            const checked = single ? checkedIds[0] === row.id : checkedIds.includes(row.id);
-            return (
-              <label key={row.id} className={`asset-card ${checked ? "checked" : ""}`}>
-                <input
-                  type={single ? "radio" : "checkbox"}
-                  name={single ? "cover-asset" : undefined}
-                  checked={checked}
-                  onChange={() => onToggle(row.id)}
-                />
+    <label key={row.id} className={`asset-card ${checked ? "checked" : ""}`}>
+      <input
+        type={single ? "radio" : "checkbox"}
+        name={single ? "cover-asset" : undefined}
+        checked={checked}
+        onChange={() => onToggle(row.id)}
+      />
+      {assetThumb(row)}
+      <span className="asset-card-name" title={row.name}>
+        {row.name}
+      </span>
+      <small>{PURPOSE_LABEL[row.purpose] ?? row.purpose}</small>
+    </label>
+  );
+
+  const renderAssetField = (args: {
+    pickerKey: "character" | "text" | "cover";
+    title: string;
+    hint: string;
+    rows: EnterpriseAsset[];
+    selectedIds: number[];
+    cap?: number;
+    onToggle: (id: number) => void;
+    onRemove: (id: number) => void;
+    single?: boolean;
+  }) => {
+    const { pickerKey, title, hint, rows, selectedIds, cap, onToggle, onRemove, single } = args;
+    if (rows.length === 0) {
+      return (
+        <div className="asset-picker span-2">
+          <strong>{title}</strong>
+          <small>{hint}</small>
+          <small className="muted">素材库中还没有可用素材,请先到「企业素材」上传</small>
+        </div>
+      );
+    }
+    return (
+      <div className="asset-picker span-2">
+        <strong>{title}</strong>
+        <small>{hint}</small>
+        <div className="asset-selected">
+          {selectedIds.map((id) => {
+            const row = assets.find((a) => a.id === id);
+            return row ? (
+              <span key={id} className="asset-chip">
                 {row.content_type === "image" && row.content_url ? (
-                  <img
-                    className="asset-card-thumb"
-                    src={row.content_url}
-                    alt={row.name}
-                    loading="lazy"
-                  />
-                ) : row.content_type === "text" ? (
-                  <span className="asset-card-thumb text">
-                    {(row.version.text_content ?? "").replace(/\s+/g, " ").trim().slice(0, 48) ||
-                      "文字素材"}
-                  </span>
+                  <img src={row.content_url} alt="" />
                 ) : (
-                  <span className="asset-card-thumb placeholder">🗂️</span>
+                  <span className="asset-chip-icon">📄</span>
                 )}
-                <span className="asset-card-name" title={row.name}>
+                <span className="asset-chip-name" title={row.name}>
                   {row.name}
                 </span>
-                <small>{PURPOSE_LABEL[row.purpose] ?? row.purpose}</small>
-              </label>
-            );
+                <button
+                  type="button"
+                  aria-label={`移除 ${row.name}`}
+                  onClick={() => onRemove(id)}
+                >
+                  ×
+                </button>
+              </span>
+            ) : null;
           })}
-          {single && (
-            <label className={`asset-card ${checkedIds.length === 0 ? "checked" : ""}`}>
-              <input
-                type="radio"
-                name="cover-asset"
-                checked={checkedIds.length === 0}
-                onChange={() => onToggle(-1)}
-              />
-              <span className="asset-card-thumb placeholder">🚫</span>
-              <span className="asset-card-name">不设封面</span>
-              <small>成员端显示默认占位</small>
-            </label>
+          {selectedIds.length === 0 && (
+            <small className="muted">尚未选择,点击下方按钮挑选</small>
           )}
         </div>
-      )}
-    </div>
-  );
+        <button type="button" className="asset-add-btn" onClick={() => setAssetPicker(pickerKey)}>
+          {selectedIds.length > 0 ? "调整素材" : "选择素材"}
+        </button>
+        {assetPicker === pickerKey && (
+          <div className="asset-modal-backdrop" onMouseDown={() => setAssetPicker(null)}>
+            <div className="asset-modal" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="asset-modal-head">
+                <strong>{title}</strong>
+                <button type="button" aria-label="关闭" onClick={() => setAssetPicker(null)}>
+                  ×
+                </button>
+              </div>
+              <div className="asset-picker-options">
+                {rows.map((row) =>
+                  assetCard(
+                    row,
+                    single ? selectedIds[0] === row.id : selectedIds.includes(row.id),
+                    onToggle,
+                    single,
+                  ),
+                )}
+                {single && (
+                  <label
+                    className={`asset-card ${selectedIds.length === 0 ? "checked" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="cover-asset"
+                      checked={selectedIds.length === 0}
+                      onChange={() => onToggle(-1)}
+                    />
+                    <span className="asset-card-thumb placeholder">🚫</span>
+                    <span className="asset-card-name">不设封面</span>
+                    <small>成员端显示默认占位</small>
+                  </label>
+                )}
+              </div>
+              <div className="asset-modal-foot">
+                <small>
+                  已选 {selectedIds.length}
+                  {cap ? ` / ${cap}` : ""}
+                </small>
+                <button type="button" className="primary" onClick={() => setAssetPicker(null)}>
+                  完成
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="ops-modal-backdrop" onMouseDown={onClose}>
@@ -328,28 +408,36 @@ function TemplateForm({
               placeholder="如:一起比心，跳一段开工舞，举产品合影"
             />
           </label>
-          {renderPicker(
-            "IP 形象参考图(进首帧合成,最多 3 张)",
-            "建议上传标准立绘/多视角图;合成时与成员照片一起交给图像模型",
-            imageAssets,
-            characterIds,
-            (id) => setCharacterIds((prev) => toggleId(prev, id).slice(0, 3)),
-          )}
-          {renderPicker(
-            "特征文字(注入提示词,最多 4 条)",
-            "IP 外形/配色/性格等要点,首帧合成与视频生成都会带上",
-            textAssets,
-            promptTextIds,
-            (id) => setPromptTextIds((prev) => toggleId(prev, id).slice(0, 4)),
-          )}
-          {renderPicker(
-            "模版封面(单选)",
-            "成员端模版卡片展示的封面图",
-            imageAssets,
-            coverId ? [coverId] : [],
-            (id) => setCoverId(id === -1 ? null : id),
-            true,
-          )}
+          {renderAssetField({
+            pickerKey: "character",
+            title: "IP 形象参考图(进首帧合成,最多 3 张)",
+            hint: "建议上传标准立绘/多视角图;合成时与成员照片一起交给图像模型",
+            rows: imageAssets,
+            selectedIds: characterIds,
+            cap: 3,
+            onToggle: (id) => setCharacterIds((prev) => toggleId(prev, id).slice(0, 3)),
+            onRemove: (id) => setCharacterIds((prev) => prev.filter((x) => x !== id)),
+          })}
+          {renderAssetField({
+            pickerKey: "text",
+            title: "特征文字(注入提示词,最多 4 条)",
+            hint: "IP 外形/配色/性格等要点,首帧合成与视频生成都会带上",
+            rows: textAssets,
+            selectedIds: promptTextIds,
+            cap: 4,
+            onToggle: (id) => setPromptTextIds((prev) => toggleId(prev, id).slice(0, 4)),
+            onRemove: (id) => setPromptTextIds((prev) => prev.filter((x) => x !== id)),
+          })}
+          {renderAssetField({
+            pickerKey: "cover",
+            title: "模版封面(单选)",
+            hint: "成员端模版卡片展示的封面图",
+            rows: imageAssets,
+            selectedIds: coverId ? [coverId] : [],
+            onToggle: (id) => setCoverId(id === -1 ? null : id),
+            onRemove: () => setCoverId(null),
+            single: true,
+          })}
           <label>
             视频模型
             <input
