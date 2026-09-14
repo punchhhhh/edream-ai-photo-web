@@ -540,7 +540,10 @@ export default function App() {
         </div>
       )}
 
-      <nav className="workspace-tabs" aria-label="创作模式">
+      <nav
+        className={`workspace-tabs ${enterpriseToken ? 'single' : ''}`}
+        aria-label="创作模式"
+      >
         {!enterpriseToken && (
           <>
             <button

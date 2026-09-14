@@ -509,6 +509,103 @@ def test_newapi_internal_client(monkeypatch) -> None:
         newapi_internal.get_user_system_key("owner-casdoor-id")
 
 
+def test_newapi_model_catalog_uses_casdoor_owner_key(monkeypatch) -> None:
+    from backend.services import newapi_internal
+
+    monkeypatch.setattr(settings, "new_api_base_url", "https://gateway.example.com/")
+    captured: dict[str, object] = {}
+
+    def _fake_key(oidc_sub: str, **kwargs) -> str:
+        captured["oidc_sub"] = oidc_sub
+        return "sk-owner-system"
+
+    def _fake_get(url: str, *, headers=None, **kwargs):
+        captured.update({"url": url, "headers": headers})
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "data": [
+                        {
+                            "id": "deepseek-v4-flash",
+                            "supported_endpoint_types": ["openai"],
+                        },
+                        {
+                            "id": "gpt-image-2",
+                            "supported_endpoint_types": ["openai"],
+                        },
+                        {
+                            "id": "wan3_720p",
+                            "supported_endpoint_types": ["openai-video"],
+                        },
+                        {
+                            "id": "veo_3_1_fast",
+                            "supported_endpoint_types": ["veo"],
+                        },
+                    ]
+                }
+
+        return _Resp()
+
+    monkeypatch.setattr(newapi_internal, "get_user_system_key", _fake_key)
+    monkeypatch.setattr(newapi_internal.httpx, "get", _fake_get)
+    models = newapi_internal.list_user_models("enterprise-owner")
+
+    assert captured["oidc_sub"] == "enterprise-owner"
+    assert captured["url"] == "https://gateway.example.com/v1/models"
+    assert captured["headers"]["Authorization"] == "Bearer sk-owner-system"
+    by_id = {model.id: model for model in models}
+    assert by_id["deepseek-v4-flash"].kind == "text"
+    assert by_id["gpt-image-2"].kind == "image"
+    assert by_id["wan3_720p"].kind == "video"
+    assert by_id["veo_3_1_fast"].kind == "video"
+    assert by_id["wan3_720p"].video_provider == "video_generations"
+
+
+def test_owner_can_fetch_newapi_model_catalog(gateway_ready, monkeypatch) -> None:
+    from backend.app import create_app
+    from backend.services import newapi_internal
+
+    captured: dict[str, str] = {}
+
+    def _fake_models(oidc_sub: str):
+        captured["oidc_sub"] = oidc_sub
+        return [
+            newapi_internal.AvailableModel(
+                id="wan3_720p",
+                kind="video",
+                endpoint_types=("openai-video",),
+                video_provider="video_generations",
+            )
+        ]
+
+    monkeypatch.setattr(newapi_internal, "list_user_models", _fake_models)
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-models", "MODELS")
+        response = client.get(
+            "/api/ops/v1/new-api-models", headers=_headers("owner-models")
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert captured["oidc_sub"] == "owner-models"
+        assert body["models"] == [
+            {
+                "id": "wan3_720p",
+                "kind": "video",
+                "endpoint_types": ["openai-video"],
+                "video_provider": "video_generations",
+            }
+        ]
+        assert body["default_video_model"] == settings.new_api_default_video_model
+
+        forbidden = client.get(
+            "/api/ops/v1/new-api-models", headers=_headers("someone-else")
+        )
+        assert forbidden.status_code == 403
+
+
 def test_owner_sees_enterprise_videos(gateway_ready, monkeypatch) -> None:
     from backend.app import create_app
 

@@ -19,16 +19,46 @@ from .access import require_enterprise
 from .enterprise import EDIT_ROLES
 from .schemas import (
     CoCreationVideoOut,
+    NewApiModelOut,
+    NewApiModelsOut,
     TemplateAssetIn,
     TemplateAssetOut,
     VideoTemplateCreateIn,
     VideoTemplateOut,
     VideoTemplateUpdateIn,
 )
-from ..services import cocreation
+from ..services import cocreation, newapi_internal
+from ..services.newapi_internal import NewApiInternalError
+from ..settings import settings
 from .service import audit
 
 router = APIRouter(prefix="/ops/v1", tags=["ops-cocreation"])
+
+
+@router.get("/new-api-models", response_model=NewApiModelsOut)
+def list_new_api_models(
+    db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    """用企业 Owner 当前 Casdoor 主体读取其 new-api 可用模型。"""
+    require_enterprise(db, user, roles={"owner"})
+    try:
+        models = newapi_internal.list_user_models(user.oauth_sub)
+    except NewApiInternalError as e:
+        raise HTTPException(502, str(e)) from e
+    return NewApiModelsOut(
+        models=[
+            NewApiModelOut(
+                id=model.id,
+                kind=model.kind,
+                endpoint_types=list(model.endpoint_types),
+                video_provider=model.video_provider,
+            )
+            for model in models
+        ],
+        default_chat_model=settings.new_api_default_chat_model.strip(),
+        default_image_model=settings.new_api_default_image_model.strip(),
+        default_video_model=settings.new_api_default_video_model.strip(),
+    )
 
 
 def _template_for_enterprise(

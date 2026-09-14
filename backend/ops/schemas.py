@@ -263,6 +263,20 @@ class InternalMaterialOut(BaseModel):
 TemplateAssetUsage = Literal["character_reference", "prompt_text", "cover"]
 
 
+class NewApiModelOut(BaseModel):
+    id: str
+    kind: Literal["text", "image", "video"]
+    endpoint_types: list[str]
+    video_provider: Literal["video_generations", "openai_videos"] | None = None
+
+
+class NewApiModelsOut(BaseModel):
+    models: list[NewApiModelOut]
+    default_chat_model: str
+    default_image_model: str
+    default_video_model: str
+
+
 class TemplateAssetIn(BaseModel):
     asset_id: int
     usage: TemplateAssetUsage
@@ -290,7 +304,7 @@ class VideoTemplateBaseIn(BaseModel):
     video_provider: Literal["video_generations", "openai_videos"] = "video_generations"
     duration: int = Field(default=5, ge=1, le=60)
     negative_prompt: str = Field(default="", max_length=2000)
-    member_photo: Literal["none", "required", "optional"] = "none"
+    member_photo: Literal["none", "required", "optional"] = "optional"
     member_photo_hint: str = Field(default="", max_length=200)
     first_frame_confirm: bool = True
     interaction_options: list[str] = Field(default_factory=list, max_length=8)

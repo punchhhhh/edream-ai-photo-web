@@ -403,6 +403,38 @@ a {
 .ops-form textarea {
   min-height: 72px;
 }
+.model-catalog-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border-top: 1px solid var(--ops-line);
+  border-bottom: 1px solid var(--ops-line);
+  color: #66716d;
+  font-size: 12px;
+}
+.model-catalog-status span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+}
+.model-catalog-status strong {
+  color: var(--ops-ink);
+}
+.model-catalog-status button {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid #cbd3cf;
+  border-radius: 5px;
+  color: var(--ops-green-dark);
+  background: #fff;
+  cursor: pointer;
+}
+.model-catalog-status button:disabled {
+  color: #8c9692;
+  cursor: wait;
+}
 .span-2 {
   grid-column: 1 / -1;
 }

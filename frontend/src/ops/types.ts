@@ -155,6 +155,22 @@ export interface PlatformAdmin {
 
 // ---- 企业共创视频 ----
 
+export type VideoProvider = "video_generations" | "openai_videos";
+
+export interface NewApiModelOption {
+  id: string;
+  kind: "text" | "image" | "video";
+  endpoint_types: string[];
+  video_provider: VideoProvider | null;
+}
+
+export interface NewApiModelCatalog {
+  models: NewApiModelOption[];
+  default_chat_model: string;
+  default_image_model: string;
+  default_video_model: string;
+}
+
 export type TemplateAssetUsage =
   | "character_reference"
   | "prompt_text"
@@ -183,7 +199,7 @@ export interface VideoTemplate {
   image_model: string;
   chat_model: string;
   video_model: string;
-  video_provider: string;
+  video_provider: VideoProvider;
   duration: number;
   negative_prompt: string;
   member_photo: "none" | "required" | "optional";
@@ -206,7 +222,7 @@ export interface VideoTemplateForm {
   image_model: string;
   chat_model: string;
   video_model: string;
-  video_provider: string;
+  video_provider: VideoProvider;
   duration: number;
   negative_prompt: string;
   member_photo: "none" | "required" | "optional";

@@ -43,6 +43,7 @@ backend/storage.py      local / COS 共用存储抽象
 | `GET /api/ops/v1/profile` | 当前身份、企业 Owner 关系和额度 |
 | `POST/PUT/DELETE /api/ops/v1/enterprise` | 申请、修改、撤销待审核企业 |
 | `GET/POST/DELETE /api/ops/v1/enterprise-entry` | 查询、生成/更新、停用企业专属入口 |
+| `GET /api/ops/v1/new-api-models` | 按当前企业 Owner 的 Casdoor 标识读取 new-api 可用模型与端点类型 |
 | `GET /api/ops/v1/assets` | 素材筛选列表 |
 | `POST /api/ops/v1/assets/text` | 创建文字素材 |
 | `POST /api/ops/v1/assets/file` | 上传文件素材 |
@@ -51,6 +52,10 @@ backend/storage.py      local / COS 共用存储抽象
 | `POST /api/ops/v1/assets/{id}/file` | 创建新的文件版本 |
 | `GET /api/ops/v1/assets/{id}/content` | 鉴权内联预览；增加 `download=true` 时作为附件下载 |
 | `/api/ops/v1/admin/*` | 企业审核、停用、额度和平台管理员管理 |
+
+共创模版不再手填模型 ID：后端使用企业 Owner 的 Casdoor `oauth_sub`
+获取 new-api system 密钥，再读取 `/v1/models`。前端按文本、图像、视频分类选择，
+视频模型选中后自动匹配接口风格，new-api 密钥始终不下发到浏览器。
 
 主业务浏览器端可使用以下登录态接口：
 

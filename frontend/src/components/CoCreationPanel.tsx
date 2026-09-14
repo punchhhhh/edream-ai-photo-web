@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import {
   composeCocreationFirstFrame,
   createCocreationVideo,
@@ -37,7 +37,7 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
   const [creation, setCreation] = useState<Creation | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const photoInputId = useId()
 
   const template: CoCreationTemplate | null =
     status.templates.find((t) => t.id === templateId) ?? null
@@ -287,7 +287,11 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
                 {t.description && <span>{t.description}</span>}
                 <span className="template-meta">
                   {t.duration}s
-                  {t.member_photo === 'required' ? ' · 需出镜' : t.member_photo === 'optional' ? ' · 可出镜' : ''}
+                  {t.member_photo === 'required'
+                    ? ' · 必须上传照片'
+                    : t.member_photo === 'optional'
+                      ? ' · 可上传照片'
+                      : ' · 仅使用企业 IP'}
                 </span>
               </div>
             </button>
@@ -307,10 +311,10 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
           </header>
           <div className="photo-upload">
             <input
-              ref={fileInputRef}
+              id={photoInputId}
+              className="file-input-native"
               type="file"
               accept="image/png,image/jpeg,image/webp,image/gif"
-              hidden
               onChange={(e) => {
                 const file = e.target.files?.[0]
                 if (file) void doUploadPhoto(file)
@@ -320,19 +324,22 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
             {photoUrl ? (
               <div className="photo-preview">
                 <img src={photoUrl} alt="我的照片" />
-                <button className="btn" onClick={() => fileInputRef.current?.click()}>
+                <label className="btn" htmlFor={photoInputId}>
                   换一张
-                </button>
+                </label>
               </div>
             ) : (
               <div className="photo-actions">
-                <button
-                  className="btn primary"
-                  disabled={uploadingPhoto}
-                  onClick={() => fileInputRef.current?.click()}
+                <label
+                  className={`btn primary ${uploadingPhoto ? 'disabled' : ''}`}
+                  htmlFor={photoInputId}
+                  aria-disabled={uploadingPhoto}
+                  onClick={(event) => {
+                    if (uploadingPhoto) event.preventDefault()
+                  }}
                 >
                   {uploadingPhoto ? '上传中…' : '📷 选择照片'}
-                </button>
+                </label>
                 {template.member_photo === 'optional' && (
                   <button className="btn" disabled={uploadingPhoto} onClick={() => setPhotoSkipped(true)}>
                     不出镜,跳过

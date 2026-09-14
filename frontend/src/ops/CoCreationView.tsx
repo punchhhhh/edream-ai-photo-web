@@ -4,12 +4,15 @@ import {
   deleteVideoTemplate,
   listCoCreationVideos,
   listEnterpriseAssets,
+  listNewApiModels,
   listVideoTemplates,
   updateVideoTemplate,
 } from "./api";
 import type {
   CoCreationVideo,
   EnterpriseAsset,
+  NewApiModelCatalog,
+  NewApiModelOption,
   OpsProfile,
   Purpose,
   TemplateAssetRef,
@@ -28,7 +31,7 @@ const EMPTY_FORM: VideoTemplateForm = {
   video_provider: "video_generations",
   duration: 5,
   negative_prompt: "",
-  member_photo: "none",
+  member_photo: "optional",
   member_photo_hint: "",
   first_frame_confirm: true,
   interaction_options: [],
@@ -86,6 +89,9 @@ function TemplateForm({
   const [error, setError] = useState("");
   const [assets, setAssets] = useState<EnterpriseAsset[]>([]);
   const [assetsError, setAssetsError] = useState("");
+  const [modelCatalog, setModelCatalog] = useState<NewApiModelCatalog | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState("");
   // 素材绑定选择:形象参考图(多选)、特征文字(多选)、封面(单选)
   const [characterIds, setCharacterIds] = useState<number[]>(
     initial.form.assets
@@ -109,6 +115,49 @@ function TemplateForm({
       .catch((err) => setAssetsError(errorMessage(err)));
   }, []);
 
+  const loadModels = useCallback(async () => {
+    setModelsLoading(true);
+    setModelsError("");
+    try {
+      const catalog = await listNewApiModels();
+      setModelCatalog(catalog);
+      if (!initial.id) {
+        setForm((prev) => {
+          const byId = new Map(catalog.models.map((model) => [model.id, model]));
+          const defaultVideo = byId.get(catalog.default_video_model);
+          return {
+            ...prev,
+            chat_model:
+              prev.chat_model ||
+              (byId.get(catalog.default_chat_model)?.kind === "text"
+                ? catalog.default_chat_model
+                : ""),
+            image_model:
+              prev.image_model ||
+              (byId.get(catalog.default_image_model)?.kind === "image"
+                ? catalog.default_image_model
+                : ""),
+            video_model:
+              prev.video_model ||
+              (defaultVideo?.kind === "video" ? catalog.default_video_model : ""),
+            video_provider:
+              prev.video_model || defaultVideo?.kind !== "video"
+                ? prev.video_provider
+                : (defaultVideo.video_provider ?? "video_generations"),
+          };
+        });
+      }
+    } catch (err) {
+      setModelsError(errorMessage(err));
+    } finally {
+      setModelsLoading(false);
+    }
+  }, [initial.id]);
+
+  useEffect(() => {
+    void loadModels();
+  }, [loadModels]);
+
   const imageAssets = useMemo(
     () => assets.filter((row) => row.content_type === "image"),
     [assets],
@@ -116,6 +165,18 @@ function TemplateForm({
   const textAssets = useMemo(
     () => assets.filter((row) => row.content_type === "text"),
     [assets],
+  );
+  const textModels = useMemo(
+    () => modelCatalog?.models.filter((model) => model.kind === "text") ?? [],
+    [modelCatalog],
+  );
+  const imageModels = useMemo(
+    () => modelCatalog?.models.filter((model) => model.kind === "image") ?? [],
+    [modelCatalog],
+  );
+  const videoModels = useMemo(
+    () => modelCatalog?.models.filter((model) => model.kind === "video") ?? [],
+    [modelCatalog],
   );
 
   const set = <K extends keyof VideoTemplateForm>(key: K, value: VideoTemplateForm[K]) =>
@@ -283,6 +344,49 @@ function TemplateForm({
     );
   };
 
+  const renderModelField = (args: {
+    key: "chat_model" | "image_model" | "video_model";
+    label: string;
+    models: NewApiModelOption[];
+    required?: boolean;
+    emptyLabel: string;
+  }) => {
+    const { key, label, models, required = false, emptyLabel } = args;
+    const current = form[key];
+    const currentAvailable = models.some((model) => model.id === current);
+    return (
+      <label>
+        {label}
+        <select
+          required={required}
+          disabled={modelsLoading}
+          value={current}
+          onChange={(event) => {
+            const value = event.target.value;
+            const selected = models.find((model) => model.id === value);
+            setForm((prev) => ({
+              ...prev,
+              [key]: value,
+              ...(key === "video_model"
+                ? { video_provider: selected?.video_provider ?? "video_generations" }
+                : {}),
+            }));
+          }}
+        >
+          <option value="">{modelsLoading ? "正在读取 new-api 模型..." : emptyLabel}</option>
+          {current && !currentAvailable && (
+            <option value={current}>{current}（当前配置已不可用）</option>
+          )}
+          {models.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.id}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  };
+
   return (
     <div className="ops-modal-backdrop" onMouseDown={onClose}>
       <div className="ops-modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -294,6 +398,7 @@ function TemplateForm({
         </div>
         {error && <div className="ops-alert error">{error}</div>}
         {assetsError && <div className="ops-alert error">{assetsError}</div>}
+        {modelsError && <div className="ops-alert error">{modelsError}</div>}
         <form
           className="ops-form"
           onSubmit={async (event) => {
@@ -391,15 +496,23 @@ function TemplateForm({
               <option value="auto">自动连出(合成后直接生成视频)</option>
             </select>
           </label>
-          <label>
-            图像模型(首帧合成;留空用企业主默认配置)
-            <input
-              maxLength={200}
-              value={form.image_model}
-              onChange={(e) => set("image_model", e.target.value)}
-              placeholder="如:gpt-image-2"
-            />
-          </label>
+          <div className="model-catalog-status span-2">
+            <span>
+              <strong>企业 new-api 可用模型</strong>
+              {modelsLoading
+                ? "正在根据当前 Casdoor 企业账号读取..."
+                : `已读取 ${modelCatalog?.models.length ?? 0} 个可用模型`}
+            </span>
+            <button type="button" onClick={() => void loadModels()} disabled={modelsLoading}>
+              重新获取
+            </button>
+          </div>
+          {renderModelField({
+            key: "image_model",
+            label: "图像模型（首帧合成）",
+            models: imageModels,
+            emptyLabel: "使用企业默认图像模型",
+          })}
           <label className="span-2">
             剧情选项(可选,成员点选即用;用逗号分隔,最多 8 个)
             <input
@@ -438,34 +551,29 @@ function TemplateForm({
             onRemove: () => setCoverId(null),
             single: true,
           })}
+          {renderModelField({
+            key: "video_model",
+            label: "视频模型",
+            models: videoModels,
+            required: true,
+            emptyLabel: "请选择视频模型",
+          })}
+          {renderModelField({
+            key: "chat_model",
+            label: "文本模型（可选，提供 AI 拓展）",
+            models: textModels,
+            emptyLabel: "不启用 AI 拓展",
+          })}
           <label>
-            视频模型
+            接口风格（自动匹配）
             <input
-              required
-              maxLength={200}
-              value={form.video_model}
-              onChange={(e) => set("video_model", e.target.value)}
-              placeholder="如:seedance-1-lite"
+              readOnly
+              value={
+                form.video_provider === "openai_videos"
+                  ? "Sora 风格 · /v1/videos"
+                  : "任务式 · /v1/video/generations"
+              }
             />
-          </label>
-          <label>
-            文本模型(可选,提供 AI 拓展)
-            <input
-              maxLength={200}
-              value={form.chat_model}
-              onChange={(e) => set("chat_model", e.target.value)}
-              placeholder="留空则成员端不展示 AI 拓展"
-            />
-          </label>
-          <label>
-            接口风格
-            <select
-              value={form.video_provider}
-              onChange={(e) => set("video_provider", e.target.value)}
-            >
-              <option value="video_generations">任务式(/v1/video/generations)</option>
-              <option value="openai_videos">Sora 风格(/v1/videos)</option>
-            </select>
           </label>
           <label>
             时长(秒)

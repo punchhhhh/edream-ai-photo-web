@@ -8,12 +8,32 @@ new-api 侧约定(internal 包):
 """
 
 import logging
+import re
+from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 
 from ..settings import settings
 
 logger = logging.getLogger(__name__)
+
+_IMAGE_MODEL_PATTERN = re.compile(
+    r"(^|[-_/])(image|imagen|flux|sdxl|stable-diffusion|dall-e)([-_/.]|$)", re.I
+)
+_VIDEO_MODEL_PATTERN = re.compile(
+    r"(^|[-_/])(video\d*|sora|seedance|veo|vidu|kling|hailuo)([-_/.]|$)"
+    r"|(^|[-_/])t2v([-_/.]|$)",
+    re.I,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AvailableModel:
+    id: str
+    kind: Literal["text", "image", "video"]
+    endpoint_types: tuple[str, ...]
+    video_provider: Literal["video_generations", "openai_videos"] | None = None
 
 
 class NewApiInternalError(RuntimeError):
@@ -65,3 +85,75 @@ def get_user_system_key(oidc_sub: str, *, deactivated_message: str | None = None
         )
     key = str(token["key"])
     return key if key.startswith("sk-") else f"sk-{key}"
+
+
+def _model_kind(model_id: str, endpoint_types: set[str]) -> Literal["text", "image", "video"]:
+    if "image-generation" in endpoint_types:
+        return "image"
+    if "openai-video" in endpoint_types:
+        return "video"
+    if _VIDEO_MODEL_PATTERN.search(model_id):
+        return "video"
+    if _IMAGE_MODEL_PATTERN.search(model_id):
+        return "image"
+    return "text"
+
+
+def list_user_models(oidc_sub: str) -> list[AvailableModel]:
+    """按 Casdoor 主体读取其 new-api system 账号当前可用的模型目录。"""
+    base = settings.new_api_base_url.strip().rstrip("/")
+    key = get_user_system_key(
+        oidc_sub,
+        deactivated_message="你的 new-api system 令牌已停用,请在 new-api 控制台重新启用后重试",
+    )
+    url = f"{base}/v1/models"
+    try:
+        resp = httpx.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {key}",
+                "User-Agent": "edream-ai-photo-web/0.1",
+            },
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            follow_redirects=True,
+        )
+    except httpx.HTTPError as e:
+        raise NewApiInternalError(f"读取企业 new-api 模型失败:{e.__class__.__name__}") from e
+    if resp.status_code >= 400:
+        raise NewApiInternalError(f"读取企业 new-api 模型失败({resp.status_code})")
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise NewApiInternalError("企业 new-api 模型列表不是合法 JSON") from None
+
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise NewApiInternalError("企业 new-api 未返回模型列表")
+
+    models: list[AvailableModel] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        model_id = str(row.get("id") or "").strip()
+        if not model_id or model_id in seen or model_id.startswith(("http://", "https://")):
+            continue
+        seen.add(model_id)
+        raw_endpoints = row.get("supported_endpoint_types")
+        endpoint_types = {
+            str(item).strip().lower()
+            for item in raw_endpoints
+            if str(item).strip()
+        } if isinstance(raw_endpoints, list) else set()
+        kind = _model_kind(model_id, endpoint_types)
+        # 当前 new-api/broker 将视频模型统一暴露为任务式 /v1/video/generations。
+        provider = "video_generations" if kind == "video" else None
+        models.append(
+            AvailableModel(
+                id=model_id,
+                kind=kind,
+                endpoint_types=tuple(sorted(endpoint_types)),
+                video_provider=provider,
+            )
+        )
+    return sorted(models, key=lambda model: (model.kind, model.id.lower()))

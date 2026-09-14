@@ -5,6 +5,7 @@ import type {
   EnterpriseEntry,
   EnterpriseConsumerGrant,
   EnterpriseForm,
+  NewApiModelCatalog,
   OpsProfile,
   PlatformAdmin,
   Purpose,
@@ -204,6 +205,8 @@ export const deletePlatformAdmin = (userId: number) =>
 // ---- 企业共创视频 ----
 export const listVideoTemplates = () =>
   request<VideoTemplate[]>("/api/ops/v1/video-templates");
+export const listNewApiModels = () =>
+  request<NewApiModelCatalog>("/api/ops/v1/new-api-models");
 export const createVideoTemplate = (payload: VideoTemplateForm) =>
   request<VideoTemplate>("/api/ops/v1/video-templates", json("POST", payload));
 export const updateVideoTemplate = (
