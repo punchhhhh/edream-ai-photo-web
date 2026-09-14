@@ -73,6 +73,8 @@ export interface EnterpriseEntry {
   enterprise_id: number;
   enterprise_name: string;
   active: boolean;
+  /** 链接访客是否自动加入企业(无需二次确认,即可使用共创等成员能力) */
+  auto_join: boolean;
   entry_url: string | null;
   created_at: string | null;
   updated_at: string | null;

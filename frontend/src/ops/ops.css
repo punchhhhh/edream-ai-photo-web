@@ -1230,6 +1230,32 @@ a {
   font-size: 12px;
   line-height: 1.65;
 }
+.entry-auto-join {
+  margin-top: 16px;
+}
+.entry-auto-join-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+.entry-auto-join-toggle input {
+  margin-top: 3px;
+  flex: none;
+}
+.entry-auto-join-toggle > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.entry-auto-join-toggle small {
+  color: var(--ops-muted);
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.6;
+}
 .entry-actions {
   margin-top: 24px;
   display: flex;

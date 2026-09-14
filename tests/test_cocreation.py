@@ -808,3 +808,119 @@ def test_template_character_reference_binding_cap(gateway_ready) -> None:
         )
         assert resp.status_code == 422
         assert "形象参考图" in resp.json()["detail"]
+
+
+def _entry_token(client: TestClient, sub: str) -> str:
+    from urllib.parse import parse_qs, urlparse
+
+    created = client.post(
+        "/api/ops/v1/enterprise-entry",
+        headers={**_headers(sub), "Origin": "http://127.0.0.1:5173"},
+    )
+    assert created.status_code == 200, created.text
+    return parse_qs(urlparse(created.json()["entry_url"]).query)["enterprise_entry"][0]
+
+
+def test_entry_auto_join_grants_cocreation(gateway_ready) -> None:
+    """开启自动加入的企业入口:链接访客自动成为成员(免二次确认),共创立即可用。"""
+    from sqlalchemy import select
+
+    from backend.app import create_app
+    from backend.database import SessionLocal
+    from backend.models import EnterpriseMembership, User
+
+    def _membership(sub: str, enterprise_id: int) -> EnterpriseMembership | None:
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.oauth_sub == sub))
+            assert user is not None
+            return db.scalar(
+                select(EnterpriseMembership).where(
+                    EnterpriseMembership.user_id == user.id,
+                    EnterpriseMembership.enterprise_id == enterprise_id,
+                )
+            )
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-aj", "O")
+        _create_template(client, "owner-aj")
+        token = _entry_token(client, "owner-aj")
+
+        # 默认不开自动加入:陌生访客 403;非 Owner 改不了入口配置
+        assert client.post(
+            "/api/enterprise-entry/resolve",
+            json={"token": token},
+            headers=_headers("visitor-x"),
+        ).status_code == 403
+        assert client.patch(
+            "/api/ops/v1/enterprise-entry",
+            json={"auto_join": True},
+            headers=_headers("visitor-x"),
+        ).status_code == 403
+
+        # 开启自动加入:访客解析入口即自动成为启用成员
+        toggled = client.patch(
+            "/api/ops/v1/enterprise-entry",
+            json={"auto_join": True},
+            headers=_headers("owner-aj"),
+        )
+        assert toggled.status_code == 200, toggled.text
+        assert toggled.json()["auto_join"] is True
+
+        resolved = client.post(
+            "/api/enterprise-entry/resolve",
+            json={"token": token},
+            headers=_headers("visitor-x"),
+        )
+        assert resolved.status_code == 200, resolved.text
+        enterprise_id = resolved.json()["enterprise_id"]
+        membership = _membership("visitor-x", enterprise_id)
+        assert membership is not None
+        assert membership.role == "member"
+        assert membership.status == "active"
+
+        # 成员共创状态可用(tab 可见性由后端判定)
+        status = client.get("/api/cocreation/status", headers=_headers("visitor-x")).json()
+        assert status["available"] is True
+        assert status["templates"]
+
+        # 重复解析幂等;成员刷新后仍能拿到企业业务身份
+        again = client.post(
+            "/api/enterprise-entry/resolve",
+            json={"token": token},
+            headers=_headers("visitor-x"),
+        )
+        assert again.status_code == 200
+        assert _membership("visitor-x", enterprise_id) is not None
+        assert client.get(
+            "/api/enterprise-entry/context", headers=_headers("visitor-x")
+        ).json() == resolved.json()
+
+        # 关掉自动加入:新访客不再自动加入,已加入成员不受影响
+        off = client.patch(
+            "/api/ops/v1/enterprise-entry",
+            json={"auto_join": False},
+            headers=_headers("owner-aj"),
+        )
+        assert off.json()["auto_join"] is False
+        assert client.post(
+            "/api/enterprise-entry/resolve",
+            json={"token": token},
+            headers=_headers("visitor-y"),
+        ).status_code == 403
+        assert client.get(
+            "/api/cocreation/status", headers=_headers("visitor-x")
+        ).json()["available"] is True
+
+        # 停用入口后 token 失效,即使重新打开自动加入也无法进入
+        client.patch(
+            "/api/ops/v1/enterprise-entry",
+            json={"auto_join": True},
+            headers=_headers("owner-aj"),
+        )
+        disabled = client.delete("/api/ops/v1/enterprise-entry", headers=_headers("owner-aj"))
+        assert disabled.json()["active"] is False
+        assert client.post(
+            "/api/enterprise-entry/resolve",
+            json={"token": token},
+            headers=_headers("visitor-z"),
+        ).status_code == 404

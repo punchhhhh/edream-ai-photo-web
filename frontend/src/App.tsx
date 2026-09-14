@@ -94,7 +94,11 @@ export default function App() {
     }
     const loadContext = token ? resolveEnterpriseEntry(token) : getEnterpriseContext()
     loadContext
-      .then(setEnterpriseContext)
+      .then((ctx) => {
+        setEnterpriseContext(ctx)
+        // 开了自动加入的入口在解析后才建立企业关系,重查共创可见性让 tab 立即出现
+        getCocreationStatus().then(setCoStatus).catch(() => {})
+      })
       .catch((reason) => {
         setEnterpriseContext(null)
         setError(reason instanceof Error ? reason.message : '无法识别企业入口')

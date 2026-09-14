@@ -172,7 +172,11 @@ class EnterpriseMembership(Base):
 
 
 class EnterpriseEntryToken(Base):
-    """企业专属业务入口；Token 只用于定位企业，仍必须校验当前 Owner。"""
+    """企业专属业务入口；Token 只用于定位企业，Owner 仍须校验成员关系。
+
+    auto_join 打开后，任何登录用户通过链接访问即自动成为企业成员
+    (role=member, status=active)，无需企业二次确认，即可使用共创能力。
+    """
 
     __tablename__ = "enterprise_entry_tokens"
 
@@ -182,6 +186,8 @@ class EnterpriseEntryToken(Base):
     )
     token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    # 链接访客自动加入企业(共创等成员能力随之开放);关闭后仅 Owner 可用链接定位企业
+    auto_join: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

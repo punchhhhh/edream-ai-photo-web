@@ -125,6 +125,11 @@ export const getEnterpriseEntry = () =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry");
 export const createEnterpriseEntry = () =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", { method: "POST" });
+export const updateEnterpriseEntry = (payload: { auto_join: boolean }) =>
+  request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 export const disableEnterpriseEntry = () =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", { method: "DELETE" });
 

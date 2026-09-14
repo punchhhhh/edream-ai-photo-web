@@ -109,6 +109,15 @@ def _ensure_enterprise_schema() -> None:
             if "deleted_at" not in asset_columns:
                 statements.append("ALTER TABLE enterprise_assets ADD COLUMN deleted_at TIMESTAMP")
 
+        if "enterprise_entry_tokens" in tables:
+            entry_columns = {
+                column["name"] for column in inspector.get_columns("enterprise_entry_tokens")
+            }
+            if "auto_join" not in entry_columns:
+                statements.append(
+                    "ALTER TABLE enterprise_entry_tokens ADD COLUMN auto_join BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+
         for statement in statements:
             connection.execute(text(statement))
 

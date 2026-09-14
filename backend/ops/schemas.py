@@ -86,9 +86,17 @@ class EnterpriseEntryOut(BaseModel):
     enterprise_id: int
     enterprise_name: str
     active: bool
+    # 链接访客是否自动加入企业(无需二次确认,即可使用共创等成员能力)
+    auto_join: bool = False
     entry_url: str | None
     created_at: datetime | None
     updated_at: datetime | None
+
+
+class EnterpriseEntryUpdateIn(BaseModel):
+    """调整入口行为;更新链接(token 轮换)仍走 POST,两者互不影响。"""
+
+    auto_join: bool
 
 
 class EnterpriseEntryResolveIn(BaseModel):
