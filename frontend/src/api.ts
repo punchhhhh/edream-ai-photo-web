@@ -1,5 +1,6 @@
 import type {
   AuthUser,
+  CoCreationFirstFrame,
   CoCreationStatus,
   Creation,
   EnterpriseBusinessContext,
@@ -130,10 +131,21 @@ export const expandCocreation = (templateId: number, text: string) =>
     body: JSON.stringify({ template_id: templateId, text }),
   })
 
+// 合拍首帧:成员照片 + 企业 IP 形象参考图 → 同框首帧
+export const composeCocreationFirstFrame = (
+  templateId: number,
+  payload: { text?: string; member_photo_path?: string | null; size?: string },
+) =>
+  request<CoCreationFirstFrame>('/api/cocreation/first-frame', {
+    method: 'POST',
+    body: JSON.stringify({ template_id: templateId, ...payload }),
+  })
+
 export const createCocreationVideo = (payload: {
   template_id: number
   text: string
   expanded_prompt?: string
+  first_frame_path?: string
 }) =>
   request<Creation>('/api/cocreation/videos', {
     method: 'POST',

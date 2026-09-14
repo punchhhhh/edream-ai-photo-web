@@ -1510,3 +1510,65 @@ a {
   white-space: nowrap;
   vertical-align: bottom;
 }
+
+/* ---- 共创模版:素材绑定与封面 ---- */
+.asset-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--ops-border, #d8dee9);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(247, 249, 252, 0.6);
+}
+
+.asset-picker > strong {
+  font-size: 13px;
+}
+
+.asset-picker > small {
+  color: #6b7684;
+}
+
+.asset-picker-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.asset-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.asset-option small {
+  color: #8a94a3;
+}
+
+.template-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.template-thumb {
+  width: 56px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--ops-border, #d8dee9);
+  flex: none;
+}
+
+.template-thumb.placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  background: #eef1f6;
+}

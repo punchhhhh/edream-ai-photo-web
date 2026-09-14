@@ -487,3 +487,324 @@ def test_owner_sees_enterprise_videos(gateway_ready, monkeypatch) -> None:
             "/api/ops/v1/cocreation/videos", headers=_headers("owner-other")
         )
         assert other.json() == []
+
+
+# ---------------------------------------------------------------- 互动剧本与素材绑定
+
+
+def _png_bytes() -> bytes:
+    return b"\x89PNG\r\n\x1a\n" + b"c" * 64
+
+
+def _upload_image_asset(
+    client: TestClient, sub: str, name: str = "IP形象图.png"
+) -> dict:
+    resp = client.post(
+        "/api/ops/v1/assets/file",
+        data={"purpose": "ip_visual", "name": name},
+        files={"file": (name, _png_bytes(), "image/png")},
+        headers=_headers(sub),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _create_text_asset(client: TestClient, sub: str) -> dict:
+    resp = client.post(
+        "/api/ops/v1/assets/text",
+        json={
+            "name": "IP特征卡",
+            "purpose": "ip_setting",
+            "text_content": "橙色小猫IP,戴蓝色围巾,圆眼睛",
+            "tags": [],
+            "description": "",
+        },
+        headers=_headers(sub),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_template_interaction_fields_and_assets(gateway_ready) -> None:
+    from backend.app import create_app
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-b1", "K")
+        image_asset = _upload_image_asset(client, "owner-b1")
+        text_asset = _create_text_asset(client, "owner-b1")
+
+        template = _create_template(
+            client,
+            "owner-b1",
+            member_photo="required",
+            member_photo_hint="请上传正脸照",
+            first_frame_prompt="咖啡馆门口与 IP 合影",
+            interaction_options=["一起比心", "跳一段开工舞"],
+            assets=[
+                {"asset_id": image_asset["id"], "usage": "character_reference"},
+                {"asset_id": image_asset["id"], "usage": "cover"},
+                {"asset_id": text_asset["id"], "usage": "prompt_text"},
+            ],
+        )
+        assert template["member_photo"] == "required"
+        assert template["first_frame_confirm"] is True
+        assert template["interaction_options"] == ["一起比心", "跳一段开工舞"]
+        usages = {(a["asset_id"], a["usage"]) for a in template["assets"]}
+        assert (image_asset["id"], "character_reference") in usages
+        assert (text_asset["id"], "prompt_text") in usages
+        assert template["cover_url"] == f"/api/ops/v1/assets/{image_asset['id']}/content"
+
+        # 成员端状态接口带派生信息:封面地址、形象参考图数量
+        status = client.get("/api/cocreation/status", headers=_headers("owner-b1")).json()
+        row = status["templates"][0]
+        assert row["character_asset_count"] == 1
+        assert row["member_photo"] == "required"
+        assert row["member_photo_hint"] == "请上传正脸照"
+        assert row["cover_url"] == f"/api/cocreation/templates/{template['id']}/cover"
+
+        # 封面由成员鉴权后按绑定读取企业素材
+        cover = client.get(row["cover_url"], headers=_headers("owner-b1"))
+        assert cover.status_code == 200
+        assert cover.content == _png_bytes()
+        # 非本企业成员不能读
+        assert client.get(row["cover_url"], headers=_headers("stranger-x")).status_code == 403
+
+        # 文字素材不能绑成形象参考
+        resp = client.post(
+            "/api/ops/v1/video-templates",
+            json={
+                "name": "坏模版",
+                "video_model": "m",
+                "assets": [{"asset_id": text_asset["id"], "usage": "character_reference"}],
+            },
+            headers=_headers("owner-b1"),
+        )
+        assert resp.status_code == 422
+
+        # 更新整体替换绑定
+        updated = client.patch(
+            f"/api/ops/v1/video-templates/{template['id']}",
+            json={"assets": []},
+            headers=_headers("owner-b1"),
+        )
+        assert updated.status_code == 200
+        assert updated.json()["assets"] == []
+        assert updated.json()["cover_url"] is None
+
+
+def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_compose(self, model, prompt, image_inputs, size="1280x720"):
+        captured["model"] = model
+        captured["prompt"] = prompt
+        captured["inputs"] = image_inputs
+        return _png_bytes(), ".png"
+
+    monkeypatch.setattr(
+        "backend.services.ai_client.AIClient.compose_image", _fake_compose
+    )
+    monkeypatch.setattr(
+        "backend.routers.cocreation.start_creation_thread", lambda *a, **k: None
+    )
+    # owner 无默认模型配置时按 Casdoor 标识实时取 system 密钥,测试里 mock 掉
+    from backend.services import newapi_internal
+
+    monkeypatch.setattr(newapi_internal, "get_user_system_key", lambda oidc_id: "sk-system-key")
+
+    from backend.app import create_app
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-ff", "L")
+        image_asset = _upload_image_asset(client, "owner-ff")
+        text_asset = _create_text_asset(client, "owner-ff")
+        template = _create_template(
+            client,
+            "owner-ff",
+            name="合拍模版",
+            first_frame_prompt="海边与 IP 合影",
+            image_model="gpt-image-2",
+            member_photo="required",
+            assets=[
+                {"asset_id": image_asset["id"], "usage": "character_reference"},
+                {"asset_id": text_asset["id"], "usage": "prompt_text"},
+            ],
+        )
+
+        # 出镜模版未合成首帧直接提交会被拦
+        early = client.post(
+            "/api/cocreation/videos",
+            json={"template_id": template["id"], "text": "创意"},
+            headers=_headers("owner-ff"),
+        )
+        assert early.status_code == 422
+        assert "出镜" in early.json()["detail"]
+
+        # 未上传照片不能合成首帧
+        no_photo = client.post(
+            "/api/cocreation/first-frame",
+            json={"template_id": template["id"], "text": "打招呼"},
+            headers=_headers("owner-ff"),
+        )
+        assert no_photo.status_code == 422
+
+        # 上传成员照片后合成首帧:成员照片 + IP 参考图一起进模型
+        photo = client.post(
+            "/api/upload",
+            files={"file": ("me.png", _png_bytes(), "image/png")},
+            headers=_headers("owner-ff"),
+        )
+        assert photo.status_code == 200, photo.text
+        frame = client.post(
+            "/api/cocreation/first-frame",
+            json={
+                "template_id": template["id"],
+                "text": "打招呼",
+                "member_photo_path": photo.json()["image_path"],
+            },
+            headers=_headers("owner-ff"),
+        )
+        assert frame.status_code == 200, frame.text
+        frame_path = frame.json()["image_path"]
+        assert frame_path.startswith("users/")
+        assert len(captured["inputs"]) == 2
+        assert captured["model"] == "gpt-image-2"
+        assert "海边与 IP 合影" in captured["prompt"]
+        assert "橙色小猫IP" in captured["prompt"]
+
+        # 不能引用别人的图片
+        stolen = client.post(
+            "/api/cocreation/videos",
+            json={
+                "template_id": template["id"],
+                "text": "创意",
+                "first_frame_path": "users/99999/images/x.png",
+            },
+            headers=_headers("owner-ff"),
+        )
+        assert stolen.status_code == 422
+
+        created = client.post(
+            "/api/cocreation/videos",
+            json={
+                "template_id": template["id"],
+                "text": "和 IP 打招呼",
+                "first_frame_path": frame_path,
+            },
+            headers=_headers("owner-ff"),
+        )
+        assert created.status_code == 200, created.text
+        body = created.json()
+        assert body["image_source"] == "generated"
+        assert body["image_path"] == frame_path
+        assert body["image_url"]
+        # 模版画面要求在最前,IP 特征文字注入,成员创意最后
+        assert body["expanded_prompt"].startswith("画面需出现品牌 Logo,暖色调")
+        assert "橙色小猫IP" in body["expanded_prompt"]
+        assert body["expanded_prompt"].endswith("和 IP 打招呼")
+
+        # 素材版本快照落库,便于追溯
+        from backend.database import SessionLocal
+        from backend.models import Creation
+
+        with SessionLocal() as db:
+            row = db.get(Creation, body["id"])
+            assert row.cocreation_materials
+            assert {item["usage"] for item in row.cocreation_materials} == {
+                "character_reference",
+                "prompt_text",
+            }
+
+
+def test_first_frame_guardrails(gateway_ready, monkeypatch) -> None:
+    """首帧合成的输入校验与每日限流:非法画幅/非图片路径 422,超每日限额 429。"""
+    monkeypatch.setattr(
+        "backend.services.ai_client.AIClient.compose_image",
+        lambda self, model, prompt, image_inputs, size="1280x720": (_png_bytes(), ".png"),
+    )
+    # owner 无默认模型配置时按 Casdoor 标识实时取 system 密钥,测试里 mock 掉
+    from backend.services import newapi_internal
+
+    monkeypatch.setattr(newapi_internal, "get_user_system_key", lambda oidc_id: "sk-system-key")
+    monkeypatch.setattr(settings, "cocreation_first_frame_daily_limit", 2)
+
+    from backend.services import cocreation as cocreation_service
+
+    cocreation_service._first_frame_counters.clear()
+
+    from backend.app import create_app
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-rl", "M")
+        image_asset = _upload_image_asset(client, "owner-rl")
+        template = _create_template(
+            client,
+            "owner-rl",
+            assets=[{"asset_id": image_asset["id"], "usage": "character_reference"}],
+        )
+
+        # 画幅只认 宽x高 数字格式
+        bad_size = client.post(
+            "/api/cocreation/first-frame",
+            json={"template_id": template["id"], "size": "biggest"},
+            headers=_headers("owner-rl"),
+        )
+        assert bad_size.status_code == 422
+
+        # 本人目录下也只能引用图片文件,视频等非图片路径被拒
+        photo = client.post(
+            "/api/upload",
+            files={"file": ("me.png", _png_bytes(), "image/png")},
+            headers=_headers("owner-rl"),
+        )
+        assert photo.status_code == 200, photo.text
+        own_prefix = photo.json()["image_path"].rsplit("/uploads/", 1)[0]
+        bad_ext = client.post(
+            "/api/cocreation/first-frame",
+            json={
+                "template_id": template["id"],
+                "member_photo_path": f"{own_prefix}/videos/fake.mp4",
+            },
+            headers=_headers("owner-rl"),
+        )
+        assert bad_ext.status_code == 422
+        assert "图片" in bad_ext.json()["detail"]
+
+        # 输入校验失败的请求不占每日额度;额度用尽后 429
+        for _ in range(2):
+            ok = client.post(
+                "/api/cocreation/first-frame",
+                json={"template_id": template["id"], "text": "打招呼"},
+                headers=_headers("owner-rl"),
+            )
+            assert ok.status_code == 200, ok.text
+        limited = client.post(
+            "/api/cocreation/first-frame",
+            json={"template_id": template["id"], "text": "打招呼"},
+            headers=_headers("owner-rl"),
+        )
+        assert limited.status_code == 429
+
+
+def test_template_character_reference_binding_cap(gateway_ready) -> None:
+    """形象参考图绑定数超过首帧合成的模型输入上限时,保存模版直接 422。"""
+    from backend.app import create_app
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-cap", "N")
+        assets = [
+            _upload_image_asset(client, "owner-cap", name=f"IP形象{i}.png") for i in range(4)
+        ]
+        resp = client.post(
+            "/api/ops/v1/video-templates",
+            json={
+                "name": "超量模版",
+                "video_model": "m",
+                "assets": [
+                    {"asset_id": a["id"], "usage": "character_reference"} for a in assets
+                ],
+            },
+            headers=_headers("owner-cap"),
+        )
+        assert resp.status_code == 422
+        assert "形象参考图" in resp.json()["detail"]

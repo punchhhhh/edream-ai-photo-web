@@ -276,12 +276,11 @@ class HealthOut(BaseModel):
 # ---------------------------------------------------------------- 企业共创视频
 
 class CoCreationTemplateOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    """成员端模版视图:不带模版内部提示词细节,只带驱动交互所需的字段。"""
 
     id: int
     name: str
     description: str
-    # 模版固定的画面要求,成员端只读展示
     prompt: str
     chat_model: str
     video_model: str
@@ -289,6 +288,13 @@ class CoCreationTemplateOut(BaseModel):
     duration: int
     is_active: bool
     sort_order: int
+    # 互动剧本:出镜要求 / 首帧确认开关 / 剧情选项 / 形象参考图数量 / 封面地址
+    member_photo: str = "none"
+    member_photo_hint: str = ""
+    first_frame_confirm: bool = True
+    interaction_options: list[str] = []
+    character_asset_count: int = 0
+    cover_url: str | None = None
 
 
 class CoCreationStatusOut(BaseModel):
@@ -306,7 +312,25 @@ class CoCreationExpandIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+class CoCreationFirstFrameIn(BaseModel):
+    """合拍首帧合成:成员照片 + 企业 IP 形象参考图 → 同框首帧。"""
+
+    template_id: int
+    text: str = Field(default="", max_length=2000)
+    # /api/upload 返回的存储 key;模版要求出镜时必传
+    member_photo_path: str | None = Field(default=None, max_length=500)
+    # 画幅,宽x高;只校验形状,具体尺寸由网关/模型裁决
+    size: str = Field(default="1280x720", pattern=r"^\d{3,4}x\d{3,4}$")
+
+
+class CoCreationFirstFrameOut(BaseModel):
+    image_path: str
+    url: str
+
+
 class CoCreationVideoCreateIn(BaseModel):
     template_id: int
     text: str = Field(min_length=1, max_length=2000)
     expanded_prompt: str = Field(default="", max_length=4000)
+    # /api/cocreation/first-frame 返回的首帧存储 key;传了走图生视频
+    first_frame_path: str | None = Field(default=None, max_length=500)

@@ -353,6 +353,10 @@ class EnterpriseVideoTemplate(Base):
     description: Mapped[str] = mapped_column(String(500), default="")
     # 模版固定的画面要求,生成时拼在成员创意前面
     prompt: Mapped[str] = mapped_column(Text, default="")
+    # 互动剧本:首帧合成用的构图要求;为空时退化为用 prompt 合成
+    first_frame_prompt: Mapped[str] = mapped_column(Text, default="")
+    # 首帧合成用的图像模型;为空时用企业主默认配置的 image_model 或平台默认
+    image_model: Mapped[str] = mapped_column(String(200), default="")
     # 可选:提供 AI 拓展能力(用企业主的网关密钥调用)
     chat_model: Mapped[str] = mapped_column(String(200), default="")
     video_model: Mapped[str] = mapped_column(String(200), default="")
@@ -360,6 +364,13 @@ class EnterpriseVideoTemplate(Base):
     video_provider: Mapped[str] = mapped_column(String(50), default="video_generations")
     duration: Mapped[int] = mapped_column(Integer, default=5)
     negative_prompt: Mapped[str] = mapped_column(Text, default="")
+    # 成员出镜要求:none = 不出镜;required = 必须上传照片;optional = 可选上传
+    member_photo: Mapped[str] = mapped_column(String(20), default="none")
+    member_photo_hint: Mapped[str] = mapped_column(String(200), default="")
+    # 首帧生成后是否需要成员确认再继续生成视频(企业按模版成熟度/预算选择)
+    first_frame_confirm: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 预设的剧情选项,成员点选即用;不填则只展示自由输入
+    interaction_options: Mapped[list[str]] = mapped_column(JSON, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_by_user_id: Mapped[int | None] = mapped_column(
@@ -370,6 +381,32 @@ class EnterpriseVideoTemplate(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnterpriseTemplateAsset(Base):
+    """模版绑定的企业素材:character_reference = IP 形象参考图(进首帧合成);
+    prompt_text = 特征文字(注入提示词);cover = 模版封面(成员端卡片展示)。
+    绑定不锁版本,生成时取素材当前启用版本并在任务上做快照,便于追溯与复现。
+    """
+
+    __tablename__ = "enterprise_template_assets"
+    __table_args__ = (
+        Index("uq_template_asset", "template_id", "asset_id", "usage", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    template_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprise_video_templates.id", ondelete="CASCADE"), index=True
+    )
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprise_assets.id", ondelete="CASCADE"), index=True
+    )
+    # character_reference / prompt_text / cover
+    usage: Mapped[str] = mapped_column(String(30))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 
@@ -427,6 +464,8 @@ class Creation(Base):
     )
     # 模版名快照,模版删除后历史记录仍可展示
     template_name: Mapped[str] = mapped_column(String(100), default="")
+    # 共创素材快照:[{asset_id, version_id, usage, name}],记录本次生成实际使用的素材版本
+    cocreation_materials: Mapped[list[dict]] = mapped_column(JSON, default=list)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

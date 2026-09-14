@@ -196,17 +196,44 @@ class InternalMaterialOut(BaseModel):
 
 # ---------------------------------------------------------------- 企业共创视频
 
+TemplateAssetUsage = Literal["character_reference", "prompt_text", "cover"]
+
+
+class TemplateAssetIn(BaseModel):
+    asset_id: int
+    usage: TemplateAssetUsage
+    sort_order: int = Field(default=0, ge=0, le=9999)
+
+
+class TemplateAssetOut(BaseModel):
+    asset_id: int
+    asset_name: str
+    usage: TemplateAssetUsage
+    sort_order: int
+    content_type: str
+    purpose: str
+    mime_type: str
+
+
 class VideoTemplateBaseIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)
     prompt: str = Field(default="", max_length=4000)
+    first_frame_prompt: str = Field(default="", max_length=4000)
+    image_model: str = Field(default="", max_length=200)
     chat_model: str = Field(default="", max_length=200)
     video_model: str = Field(min_length=1, max_length=200)
     video_provider: Literal["video_generations", "openai_videos"] = "video_generations"
     duration: int = Field(default=5, ge=1, le=60)
     negative_prompt: str = Field(default="", max_length=2000)
+    member_photo: Literal["none", "required", "optional"] = "none"
+    member_photo_hint: str = Field(default="", max_length=200)
+    first_frame_confirm: bool = True
+    interaction_options: list[str] = Field(default_factory=list, max_length=8)
     is_active: bool = True
     sort_order: int = Field(default=0, ge=0, le=9999)
+    # 绑定的企业素材;创建时按列表落库,更新时传了就整体替换
+    assets: list[TemplateAssetIn] = Field(default_factory=list, max_length=12)
 
 
 class VideoTemplateCreateIn(VideoTemplateBaseIn):
@@ -217,30 +244,44 @@ class VideoTemplateUpdateIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     prompt: str | None = Field(default=None, max_length=4000)
+    first_frame_prompt: str | None = Field(default=None, max_length=4000)
+    image_model: str | None = Field(default=None, max_length=200)
     chat_model: str | None = Field(default=None, max_length=200)
     video_model: str | None = Field(default=None, min_length=1, max_length=200)
     video_provider: Literal["video_generations", "openai_videos"] | None = None
     duration: int | None = Field(default=None, ge=1, le=60)
     negative_prompt: str | None = Field(default=None, max_length=2000)
+    member_photo: Literal["none", "required", "optional"] | None = None
+    member_photo_hint: str | None = Field(default=None, max_length=200)
+    first_frame_confirm: bool | None = None
+    interaction_options: list[str] | None = Field(default=None, max_length=8)
     is_active: bool | None = None
     sort_order: int | None = Field(default=None, ge=0, le=9999)
+    assets: list[TemplateAssetIn] | None = Field(default=None, max_length=12)
 
 
 class VideoTemplateOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     enterprise_id: int
     name: str
     description: str
     prompt: str
+    first_frame_prompt: str
+    image_model: str
     chat_model: str
     video_model: str
     video_provider: str
     duration: int
     negative_prompt: str
+    member_photo: str
+    member_photo_hint: str
+    first_frame_confirm: bool
+    interaction_options: list[str]
     is_active: bool
     sort_order: int
+    assets: list[TemplateAssetOut]
+    # 封面素材的 Ops 内容地址(无封面绑定为 None)
+    cover_url: str | None
     created_at: datetime
     updated_at: datetime
 

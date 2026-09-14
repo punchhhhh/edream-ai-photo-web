@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     new_api_default_video_model: str = "wan3_720p"
     # 每个成员可保留的共创视频上限(非失败状态的任务数)
     cocreation_max_videos_per_user: int = 3
+    # 每个成员每天可合成的合拍首帧上限(不占视频配额但消耗企业网关额度);0 = 不限
+    cocreation_first_frame_daily_limit: int = 30
 
     # 跨域来源,逗号分隔;生产部署改为实际的前端域名
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173"
