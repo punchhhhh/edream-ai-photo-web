@@ -38,6 +38,10 @@ from .auth import get_current_user
 router = APIRouter(tags=["vlogs"])
 
 
+def _is_wan3_model(model: str) -> bool:
+    return model.lower().startswith("wan3_")
+
+
 def _get_project(db: Session, user: User, project_id: int) -> VlogProject:
     project = db.get(VlogProject, project_id)
     if project is None or project.user_id != user.id:
@@ -378,10 +382,15 @@ def create_vlog(
     config = db.get(ModelConfig, payload.config_id)
     if config is None or config.user_id != user.id:
         raise HTTPException(404, f"模型配置 {payload.config_id} 不存在")
-    if "seedance-2" not in config.video_model.lower():
-        raise HTTPException(422, "Vlog 当前需要选择 Seedance 2.0 视频模型")
-    if config.video_provider != "video_generations":
-        raise HTTPException(422, "Seedance 2.0 Vlog 需要 video_generations 接口")
+    video_model = config.video_model.lower()
+    if _is_wan3_model(video_model):
+        if config.video_provider != "openai_videos":
+            raise HTTPException(422, "Wan3 Vlog 需要 Sora 风格 /v1/videos 接口")
+    elif "seedance-2" in video_model:
+        if config.video_provider != "video_generations":
+            raise HTTPException(422, "Seedance 2.0 Vlog 需要 video_generations 接口")
+    else:
+        raise HTTPException(422, "Vlog 当前需要选择 Seedance 2.0 或 Wan3 视频模型")
     _validate_image_paths(user, payload.image_paths)
 
     active = db.scalars(

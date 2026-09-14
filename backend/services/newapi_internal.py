@@ -22,7 +22,7 @@ _IMAGE_MODEL_PATTERN = re.compile(
     r"(^|[-_/])(image|imagen|flux|sdxl|stable-diffusion|dall-e)([-_/.]|$)", re.I
 )
 _VIDEO_MODEL_PATTERN = re.compile(
-    r"(^|[-_/])(video\d*|sora|seedance|veo|vidu|kling|hailuo)([-_/.]|$)"
+    r"(^|[-_/])(video\d*|sora|seedance|veo|vidu|kling|hailuo|wan\d*)([-_/.]|$)"
     r"|(^|[-_/])t2v([-_/.]|$)",
     re.I,
 )
@@ -146,8 +146,9 @@ def list_user_models(oidc_sub: str) -> list[AvailableModel]:
             if str(item).strip()
         } if isinstance(raw_endpoints, list) else set()
         kind = _model_kind(model_id, endpoint_types)
-        # 当前 new-api/broker 将视频模型统一暴露为任务式 /v1/video/generations。
-        provider = "video_generations" if kind == "video" else None
+        provider = None
+        if kind == "video":
+            provider = "openai_videos" if "openai-video" in endpoint_types else "video_generations"
         models.append(
             AvailableModel(
                 id=model_id,

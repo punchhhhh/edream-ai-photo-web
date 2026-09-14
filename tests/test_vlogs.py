@@ -53,6 +53,14 @@ def _config(client: TestClient, sub: str = "vlog-user") -> dict:
     return response.json()
 
 
+def _config_with(client: TestClient, sub: str = "vlog-user", **overrides) -> dict:
+    payload = dict(CONFIG_PAYLOAD)
+    payload.update(overrides)
+    response = client.post("/api/configs", json=payload, headers=_headers(sub))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def _upload(client: TestClient, count: int = 9, sub: str = "vlog-user") -> dict:
     files = []
     for index in range(count):
@@ -117,6 +125,42 @@ def test_nine_images_plan_three_scenes_and_variable_duration(client: TestClient)
     assert project["target_duration"] == 30
     assert project["transition_style"] == "fade"
     assert client.get("/api/vlogs/latest", headers=_headers()).json()["id"] == project["id"]
+
+
+def test_create_vlog_accepts_wan3_openai_videos_config(client: TestClient) -> None:
+    upload = _upload(client, count=2)
+    config = _config_with(
+        client,
+        name="Wan3 Sora 网关",
+        video_model="wan3_720p",
+        video_provider="openai_videos",
+    )
+    project = _create_project(client, upload, config["id"])
+
+    assert project["video_model"] == "wan3_720p"
+    assert len(project["clips"]) == 2
+
+
+def test_create_vlog_rejects_wan3_task_style_config(client: TestClient) -> None:
+    upload = _upload(client, count=2)
+    config = _config_with(
+        client,
+        name="Wan3 错误接口",
+        video_model="wan3_720p",
+        video_provider="video_generations",
+    )
+    response = client.post(
+        "/api/vlogs",
+        json={
+            "config_id": config["id"],
+            "image_paths": [image["image_path"] for image in upload["images"]],
+            "style": "写实纪录",
+        },
+        headers=_headers(),
+    )
+
+    assert response.status_code == 422
+    assert "Wan3" in response.json()["detail"]
 
 
 def test_create_vlog_accepts_nine_images_per_group_and_uses_group_description(client: TestClient) -> None:

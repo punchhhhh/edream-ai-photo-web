@@ -238,6 +238,43 @@ def test_run_video_resume_skips_submit(monkeypatch) -> None:
     assert result["task_id"] == "old-task"
 
 
+def test_openai_videos_submit_sends_multiple_references(monkeypatch) -> None:
+    from backend.services.ai_client import AIClient
+
+    captured: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"id": "task-sora"}
+
+    with AIClient("http://gw.test", "sk-test", provider="openai_videos") as client:
+
+        def fake_post(url, *, data=None, files=None, timeout=None):
+            captured.update({"url": url, "data": data, "files": files, "timeout": timeout})
+            return _Resp()
+
+        monkeypatch.setattr(client.client, "post", fake_post)
+        task_id, direct = client._submit_video(
+            "wan3_720p",
+            "prompt",
+            None,
+            10,
+            image_inputs=[(b"one", "image/jpeg"), (b"two", "image/png")],
+            ratio="9:16",
+            resolution="720p",
+            generate_audio=True,
+        )
+
+    assert (task_id, direct) == ("task-sora", None)
+    assert captured["url"] == "http://gw.test/v1/videos"
+    assert captured["data"]["model"] == "wan3_720p"
+    assert captured["data"]["resolution"] == "720p"
+    assert len(captured["files"]) == 2
+    assert {item[0] for item in captured["files"]} == {"input_reference"}
+
+
 def test_submit_video_retries_only_on_parameter_errors(monkeypatch) -> None:
     from backend.services.ai_client import AICallError, AIClient
 

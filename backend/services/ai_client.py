@@ -283,13 +283,24 @@ class AIClient:
     ) -> tuple[str | None, str | None]:
         """提交视频任务,返回 (task_id, 已经完成的直链 URL)。"""
         if self.provider == "openai_videos":
-            if image_bytes is not None:
-                # Sora 风格接口用 multipart 传参考图
+            if image_inputs is not None or image_bytes is not None:
+                references = image_inputs or [(image_bytes or b"", image_mime)]
+                files = [
+                    ("input_reference", (f"reference-{index}.png", data, mime or "image/png"))
+                    for index, (data, mime) in enumerate(references)
+                ]
+                form: dict[str, str] = {"model": model, "prompt": prompt, "seconds": str(duration)}
+                if resolution:
+                    form["resolution"] = resolution
+                if ratio:
+                    form["ratio"] = ratio
+                if generate_audio is not None:
+                    form["generate_audio"] = "true" if generate_audio else "false"
                 try:
                     resp = self.client.post(
                         f"{self.base}/v1/videos",
-                        data={"model": model, "prompt": prompt, "seconds": str(duration)},
-                        files={"input_reference": ("reference.png", image_bytes, image_mime)},
+                        data=form,
+                        files=files,
                         timeout=180.0,
                     )
                     if resp.status_code >= 400:
@@ -298,11 +309,14 @@ class AIClient:
                 except httpx.HTTPError as e:
                     raise AICallError(f"请求模型服务失败(/v1/videos):{e.__class__.__name__}: {e}") from e
             else:
-                data = self._request(
-                    "POST",
-                    "/v1/videos",
-                    json={"model": model, "prompt": prompt, "seconds": duration},
-                )
+                body: dict[str, Any] = {"model": model, "prompt": prompt, "seconds": duration}
+                if resolution:
+                    body["resolution"] = resolution
+                if ratio:
+                    body["ratio"] = ratio
+                if generate_audio is not None:
+                    body["generate_audio"] = generate_audio
+                data = self._request("POST", "/v1/videos", json=body)
         else:
             body: dict[str, Any] = {"model": model, "prompt": prompt, "duration": duration}
             if negative_prompt:

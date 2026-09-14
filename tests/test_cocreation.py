@@ -561,7 +561,7 @@ def test_newapi_model_catalog_uses_casdoor_owner_key(monkeypatch) -> None:
     assert by_id["gpt-image-2"].kind == "image"
     assert by_id["wan3_720p"].kind == "video"
     assert by_id["veo_3_1_fast"].kind == "video"
-    assert by_id["wan3_720p"].video_provider == "video_generations"
+    assert by_id["wan3_720p"].video_provider == "openai_videos"
 
 
 def test_owner_can_fetch_newapi_model_catalog(gateway_ready, monkeypatch) -> None:
@@ -577,7 +577,7 @@ def test_owner_can_fetch_newapi_model_catalog(gateway_ready, monkeypatch) -> Non
                 id="wan3_720p",
                 kind="video",
                 endpoint_types=("openai-video",),
-                video_provider="video_generations",
+                video_provider="openai_videos",
             )
         ]
 
@@ -595,7 +595,7 @@ def test_owner_can_fetch_newapi_model_catalog(gateway_ready, monkeypatch) -> Non
                 "id": "wan3_720p",
                 "kind": "video",
                 "endpoint_types": ["openai-video"],
-                "video_provider": "video_generations",
+                "video_provider": "openai_videos",
             }
         ]
         assert body["default_video_model"] == settings.new_api_default_video_model
