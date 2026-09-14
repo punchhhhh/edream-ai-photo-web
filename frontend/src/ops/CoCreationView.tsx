@@ -11,6 +11,7 @@ import type {
   CoCreationVideo,
   EnterpriseAsset,
   OpsProfile,
+  Purpose,
   TemplateAssetRef,
   VideoTemplate,
   VideoTemplateForm,
@@ -47,6 +48,12 @@ const MEMBER_PHOTO_LABEL: Record<VideoTemplateForm["member_photo"], string> = {
   none: "不出镜",
   required: "需出镜",
   optional: "可出镜",
+};
+
+const PURPOSE_LABEL: Record<Purpose, string> = {
+  ip_setting: "IP 设定",
+  ip_visual: "IP 形象",
+  brand_product: "品牌/产品",
 };
 
 function formatDateTime(value: string) {
@@ -146,32 +153,49 @@ function TemplateForm({
         <small className="muted">素材库中还没有可用素材,请先到「企业素材」上传</small>
       ) : (
         <div className="asset-picker-options">
-          {rows.map((row) => (
-            <label key={row.id} className="asset-option">
-              <input
-                type={single ? "radio" : "checkbox"}
-                name={single ? "cover-asset" : undefined}
-                checked={single ? checkedIds[0] === row.id : checkedIds.includes(row.id)}
-                onChange={() => onToggle(row.id)}
-              />
-              <span>
-                {row.name}
-                <small> · {row.purpose}</small>
-              </span>
-            </label>
-          ))}
+          {rows.map((row) => {
+            const checked = single ? checkedIds[0] === row.id : checkedIds.includes(row.id);
+            return (
+              <label key={row.id} className={`asset-card ${checked ? "checked" : ""}`}>
+                <input
+                  type={single ? "radio" : "checkbox"}
+                  name={single ? "cover-asset" : undefined}
+                  checked={checked}
+                  onChange={() => onToggle(row.id)}
+                />
+                {row.content_type === "image" && row.content_url ? (
+                  <img
+                    className="asset-card-thumb"
+                    src={row.content_url}
+                    alt={row.name}
+                    loading="lazy"
+                  />
+                ) : row.content_type === "text" ? (
+                  <span className="asset-card-thumb text">
+                    {(row.version.text_content ?? "").replace(/\s+/g, " ").trim().slice(0, 48) ||
+                      "文字素材"}
+                  </span>
+                ) : (
+                  <span className="asset-card-thumb placeholder">🗂️</span>
+                )}
+                <span className="asset-card-name" title={row.name}>
+                  {row.name}
+                </span>
+                <small>{PURPOSE_LABEL[row.purpose] ?? row.purpose}</small>
+              </label>
+            );
+          })}
           {single && (
-            <label className="asset-option">
+            <label className={`asset-card ${checkedIds.length === 0 ? "checked" : ""}`}>
               <input
                 type="radio"
                 name="cover-asset"
                 checked={checkedIds.length === 0}
                 onChange={() => onToggle(-1)}
               />
-              <span>
-                不设封面
-                <small> · 成员端显示默认占位</small>
-              </span>
+              <span className="asset-card-thumb placeholder">🚫</span>
+              <span className="asset-card-name">不设封面</span>
+              <small>成员端显示默认占位</small>
             </label>
           )}
         </div>
