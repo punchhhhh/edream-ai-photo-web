@@ -56,6 +56,16 @@ ENTERPRISE_BATCH_MAX_FILES=20
 ENTERPRISE_BATCH_MAX_MB=1024
 # 仅 local 存储使用；必须位于 nginx 静态目录之外
 ENTERPRISE_MEDIA_DIR=/opt/edream-enterprise-media
+
+# new-api 网关(「一键 new-api 默认配置」与企业共创依赖;内部密钥只存服务端)
+# 三项任一留空:一键默认配置不可用、共创整体关闭
+NEW_API_BASE_URL=https://<new-api 域名>
+NEW_API_INTERNAL_KEY_ID=<new-api 后台配置的 X-Key-Id>
+NEW_API_INTERNAL_KEY=<new-api 后台配置的 X-Key>
+# 一键默认配置的预填模型,可省略(默认 deepseek-v4-flash / gpt-image-2 / wan3_720p)
+NEW_API_DEFAULT_CHAT_MODEL=deepseek-v4-flash
+NEW_API_DEFAULT_IMAGE_MODEL=gpt-image-2
+NEW_API_DEFAULT_VIDEO_MODEL=wan3_720p
 ```
 
 如启用独立运营域名，Casdoor 需同时登记 `https://studio.ymmjc.com/api/auth/callback` 与 `https://ops.studio.ymmjc.com/api/auth/callback`，并删除固定的 `OAUTH_REDIRECT_URI`，让后端按请求域名生成回调；同时把两个 HTTPS 来源都加入 `CORS_ORIGINS`，设置 `ENTERPRISE_BUSINESS_BASE_URL=https://studio.ymmjc.com`。运营域名 nginx 复用同一 `frontend/dist` 和 `/api/` 反代，并将 `/` 重定向到 `/ops`。

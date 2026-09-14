@@ -36,6 +36,7 @@ from .schemas import (
     AssetUpdateIn,
     EnterpriseApplyIn,
     EnterpriseEntryOut,
+    EnterpriseEntryUpdateIn,
     EnterpriseOut,
     EnterpriseReviewIn,
     EnterpriseStatusIn,
@@ -265,6 +266,7 @@ def _entry_out(
         enterprise_id=enterprise.id,
         enterprise_name=enterprise.name,
         active=active,
+        auto_join=bool(entry.auto_join) if entry else False,
         entry_url=entry_url,
         created_at=entry.created_at if entry else None,
         updated_at=entry.updated_at if entry else None,
@@ -319,6 +321,37 @@ def create_enterprise_entry(
         action="enterprise.entry.rotate",
         resource_type="enterprise_entry",
         resource_id=entry.id,
+    )
+    db.commit()
+    db.refresh(entry)
+    return _entry_out(request, context.enterprise, entry)
+
+
+@router.patch("/enterprise-entry", response_model=EnterpriseEntryOut)
+def update_enterprise_entry(
+    payload: EnterpriseEntryUpdateIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """调整入口行为(如自动加入);不轮换 token,已分发的链接保持有效。"""
+    context = require_enterprise(db, user, roles={"owner"})
+    entry = db.scalar(
+        select(EnterpriseEntryToken).where(
+            EnterpriseEntryToken.enterprise_id == context.enterprise.id
+        )
+    )
+    if entry is None or entry.status != "active":
+        raise HTTPException(404, "尚未生成企业入口,请先生成再配置")
+    entry.auto_join = payload.auto_join
+    audit(
+        db,
+        user=user,
+        enterprise_id=context.enterprise.id,
+        action="enterprise.entry.update",
+        resource_type="enterprise_entry",
+        resource_id=entry.id,
+        details={"auto_join": payload.auto_join},
     )
     db.commit()
     db.refresh(entry)

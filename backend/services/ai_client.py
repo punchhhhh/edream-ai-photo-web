@@ -189,6 +189,60 @@ class AIClient:
                 raise
             body.pop("response_format", None)
             data = self._request("POST", "/v1/images/generations", json=body, timeout=300.0)
+        return self._decode_image_response(data)
+
+    def compose_image(
+        self,
+        model: str,
+        prompt: str,
+        image_inputs: list[tuple[bytes, str]],
+        size: str = "1280x720",
+    ) -> tuple[bytes, str]:
+        """多参考图合成(如 用户照片 + 企业 IP 形象图 → 合拍首帧),走 /v1/images/edits。
+
+        不同网关对多图 multipart 字段名不一致:OpenAI 风格多图为 image[],单图为 image;
+        先按主流写法提交,参数类 4xx 再换一种字段名重试,均失败给出可读错误。
+        """
+        if not model:
+            raise AICallError("模版未配置图像模型,无法合成首帧画面")
+        if not image_inputs:
+            raise AICallError("缺少参考图,无法合成首帧画面")
+
+        def _post(field: str) -> httpx.Response:
+            files = [
+                (field, (f"reference-{index}.png", data, mime or "image/png"))
+                for index, (data, mime) in enumerate(image_inputs)
+            ]
+            form: dict[str, str] = {"model": model, "prompt": prompt, "n": "1"}
+            if size:
+                form["size"] = size
+            return self.client.post(f"{self.base}/v1/images/edits", data=form, files=files, timeout=300.0)
+
+        field = "image[]" if len(image_inputs) > 1 else "image"
+        try:
+            resp = _post(field)
+        except httpx.HTTPError as e:
+            raise AICallError(f"请求模型服务失败(/v1/images/edits):{e.__class__.__name__}: {e}") from e
+        first_error = ""
+        if resp.status_code in (400, 404, 422):
+            # 参数类 4xx:换另一种字段命名重试一次,同时留底第一次的错误便于排障
+            first_error = f"{resp.status_code}:{_snippet(resp.text)}"
+            field = "image" if field == "image[]" else "image[]"
+            try:
+                resp = _post(field)
+            except httpx.HTTPError as e:
+                raise AICallError(f"请求模型服务失败(/v1/images/edits):{e.__class__.__name__}: {e}") from e
+        if resp.status_code >= 400:
+            detail = _snippet(resp.text)
+            if first_error:
+                detail = f"首次尝试 {first_error} | 重试后 {detail}"
+            raise AICallError(f"模型服务返回 {resp.status_code}(/v1/images/edits):{detail}")
+        try:
+            return self._decode_image_response(resp.json())
+        except ValueError as e:
+            raise AICallError(f"图片模型响应不是有效 JSON:{_snippet(resp.text)}") from e
+
+    def _decode_image_response(self, data: Any) -> tuple[bytes, str]:
         try:
             item = data["data"][0]
         except (KeyError, IndexError, TypeError):

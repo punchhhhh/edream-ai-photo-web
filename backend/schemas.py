@@ -240,6 +240,10 @@ class CreationOut(BaseModel):
     chat_model: str
     image_model: str
     video_model: str
+    # 企业共创任务:enterprise_id 非空表示基于企业模版生成
+    enterprise_id: int | None = None
+    template_id: int | None = None
+    template_name: str = ""
     # 成片若来自 Vlog 项目，历史列表可用这个关联直接打开可编辑副本。
     vlog_project_id: int | None = None
     created_at: datetime
@@ -267,3 +271,66 @@ class ConfigTestOut(BaseModel):
 class HealthOut(BaseModel):
     ok: bool
     media_dir: str
+
+
+# ---------------------------------------------------------------- 企业共创视频
+
+class CoCreationTemplateOut(BaseModel):
+    """成员端模版视图:不带模版内部提示词细节,只带驱动交互所需的字段。"""
+
+    id: int
+    name: str
+    description: str
+    prompt: str
+    chat_model: str
+    video_model: str
+    video_provider: str
+    duration: int
+    is_active: bool
+    sort_order: int
+    # 互动剧本:出镜要求 / 首帧确认开关 / 剧情选项 / 形象参考图数量 / 封面地址
+    member_photo: str = "none"
+    member_photo_hint: str = ""
+    first_frame_confirm: bool = True
+    interaction_options: list[str] = []
+    character_asset_count: int = 0
+    cover_url: str | None = None
+
+
+class CoCreationStatusOut(BaseModel):
+    """主应用共创 tab 的显隐与渲染依据:available=false 时 reason 说明原因。"""
+
+    available: bool
+    reason: str = ""
+    templates: list[CoCreationTemplateOut] = []
+    used: int = 0
+    limit: int = 0
+
+
+class CoCreationExpandIn(BaseModel):
+    template_id: int
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class CoCreationFirstFrameIn(BaseModel):
+    """合拍首帧合成:成员照片 + 企业 IP 形象参考图 → 同框首帧。"""
+
+    template_id: int
+    text: str = Field(default="", max_length=2000)
+    # /api/upload 返回的存储 key;模版要求出镜时必传
+    member_photo_path: str | None = Field(default=None, max_length=500)
+    # 画幅,宽x高;只校验形状,具体尺寸由网关/模型裁决
+    size: str = Field(default="1280x720", pattern=r"^\d{3,4}x\d{3,4}$")
+
+
+class CoCreationFirstFrameOut(BaseModel):
+    image_path: str
+    url: str
+
+
+class CoCreationVideoCreateIn(BaseModel):
+    template_id: int
+    text: str = Field(min_length=1, max_length=2000)
+    expanded_prompt: str = Field(default="", max_length=4000)
+    # /api/cocreation/first-frame 返回的首帧存储 key;传了走图生视频
+    first_frame_path: str | None = Field(default=None, max_length=500)

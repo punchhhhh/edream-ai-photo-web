@@ -9,6 +9,7 @@ import {
   Boxes,
   Building2,
   Check,
+  Clapperboard,
   Copy,
   Download,
   ExternalLink,
@@ -36,6 +37,7 @@ import {
   logoutOps,
   reviewEnterprise,
   updateEnterprise,
+  updateEnterpriseEntry,
   updateEnterpriseQuota,
 } from "./api";
 import type {
@@ -47,6 +49,7 @@ import type {
   Quota,
 } from "./types";
 import MaterialsView from "./MaterialsView";
+import CoCreationView from "./CoCreationView";
 import {
   beginLogin,
   completeLogout,
@@ -344,6 +347,25 @@ function EnterpriseEntryView() {
     }
   };
 
+  const toggleAutoJoin = async (autoJoin: boolean) => {
+    if (
+      autoJoin &&
+      !window.confirm(
+        "开启后，任何拿到链接的登录用户都会自动加入企业并使用共创额度，确定继续吗？"
+      )
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      setEntry(await updateEnterpriseEntry({ auto_join: autoJoin }));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const disable = async () => {
     if (!window.confirm("停用后当前链接和二维码将无法访问，确定继续吗？"))
       return;
@@ -364,7 +386,7 @@ function EnterpriseEntryView() {
       <div className="ops-section-head">
         <div>
           <h2>企业入口</h2>
-          <p>为当前企业生成专属业务入口，仅绑定唯一的 Casdoor Owner</p>
+          <p>为当前企业生成专属分享链接；可开启自动加入，链接访客免确认成为成员并使用共创</p>
         </div>
       </div>
       {error && <div className="ops-alert error">{error}</div>}
@@ -410,8 +432,27 @@ function EnterpriseEntryView() {
                   打开
                 </a>
               </div>
+              <div className="entry-auto-join">
+                <label className="entry-auto-join-toggle">
+                  <input
+                    type="checkbox"
+                    checked={entry.auto_join}
+                    disabled={busy}
+                    onChange={(e) => void toggleAutoJoin(e.target.checked)}
+                  />
+                  <span>
+                    自动加入
+                    <small>
+                      开启后，通过链接访问的登录用户自动加入企业，无需二次确认，
+                      即可使用共创;关闭后链接仅对 Owner 定位企业有效。
+                    </small>
+                  </span>
+                </label>
+              </div>
               <p className="entry-security-note">
-                链接用于识别企业；访问时仍会校验登录账号必须是该企业已认证的 Owner。
+                {entry.auto_join
+                  ? "自动加入已开启：链接即成员入口，请只分发给目标社群；成员的共创次数与首帧合成仍受平台限额约束。"
+                  : "链接用于识别企业；未开启自动加入时，访问账号必须是该企业已认证的 Owner。"}
               </p>
               <div className="entry-actions">
                 <button onClick={() => void generate()} disabled={busy}>
@@ -828,7 +869,7 @@ export default function OpsApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<
-    "materials" | "entry" | "enterprise" | "admin"
+    "materials" | "entry" | "enterprise" | "cocreation" | "admin"
   >("materials");
   const reload = useCallback(async () => {
     if (loggedOut) {
@@ -938,6 +979,13 @@ export default function OpsApp() {
                   素材管理
                 </button>
                 <button
+                  className={visibleTab === "cocreation" ? "active" : ""}
+                  onClick={() => setTab("cocreation")}
+                >
+                  <Clapperboard size={17} />
+                  视频共创
+                </button>
+                <button
                   className={visibleTab === "entry" ? "active" : ""}
                   onClick={() => setTab("entry")}
                 >
@@ -973,6 +1021,9 @@ export default function OpsApp() {
           <main className="ops-content">
             {visibleTab === "materials" && enterpriseReady && (
               <MaterialsView profile={profile} />
+            )}
+            {visibleTab === "cocreation" && enterpriseReady && (
+              <CoCreationView profile={profile} />
             )}
             {visibleTab === "entry" && enterpriseReady && (
               <EnterpriseEntryView />

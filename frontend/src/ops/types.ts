@@ -73,6 +73,8 @@ export interface EnterpriseEntry {
   enterprise_id: number;
   enterprise_name: string;
   active: boolean;
+  /** 链接访客是否自动加入企业(无需二次确认,即可使用共创等成员能力) */
+  auto_join: boolean;
   entry_url: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -121,4 +123,85 @@ export interface PlatformAdmin {
   display_name: string | null;
   email: string | null;
   source: "database" | "environment";
+}
+
+// ---- 企业共创视频 ----
+
+export type TemplateAssetUsage =
+  | "character_reference"
+  | "prompt_text"
+  | "cover";
+
+export interface TemplateAssetRef {
+  asset_id: number;
+  usage: TemplateAssetUsage;
+  sort_order: number;
+}
+
+export interface TemplateAssetInfo extends TemplateAssetRef {
+  asset_name: string;
+  content_type: string;
+  purpose: Purpose;
+  mime_type: string;
+}
+
+export interface VideoTemplate {
+  id: number;
+  enterprise_id: number;
+  name: string;
+  description: string;
+  prompt: string;
+  first_frame_prompt: string;
+  image_model: string;
+  chat_model: string;
+  video_model: string;
+  video_provider: string;
+  duration: number;
+  negative_prompt: string;
+  member_photo: "none" | "required" | "optional";
+  member_photo_hint: string;
+  first_frame_confirm: boolean;
+  interaction_options: string[];
+  is_active: boolean;
+  sort_order: number;
+  assets: TemplateAssetInfo[];
+  cover_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VideoTemplateForm {
+  name: string;
+  description: string;
+  prompt: string;
+  first_frame_prompt: string;
+  image_model: string;
+  chat_model: string;
+  video_model: string;
+  video_provider: string;
+  duration: number;
+  negative_prompt: string;
+  member_photo: "none" | "required" | "optional";
+  member_photo_hint: string;
+  first_frame_confirm: boolean;
+  interaction_options: string[];
+  is_active: boolean;
+  sort_order: number;
+  assets: TemplateAssetRef[];
+}
+
+export interface CoCreationVideo {
+  id: number;
+  creator_id: number;
+  creator_sub: string;
+  creator_name: string | null;
+  template_id: number | null;
+  template_name: string;
+  input_text: string;
+  video_model: string;
+  duration: number;
+  status: string;
+  error: string | null;
+  video_url: string | null;
+  created_at: string;
 }

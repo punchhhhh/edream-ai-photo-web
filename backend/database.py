@@ -27,6 +27,7 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     _ensure_vlog_transition_schema()
     _ensure_enterprise_schema()
+    _ensure_cocreation_schema()
 
 
 def _ensure_vlog_transition_schema() -> None:
@@ -107,6 +108,15 @@ def _ensure_enterprise_schema() -> None:
                 )
             if "deleted_at" not in asset_columns:
                 statements.append("ALTER TABLE enterprise_assets ADD COLUMN deleted_at TIMESTAMP")
+
+        if "enterprise_entry_tokens" in tables:
+            entry_columns = {
+                column["name"] for column in inspector.get_columns("enterprise_entry_tokens")
+            }
+            if "auto_join" not in entry_columns:
+                statements.append(
+                    "ALTER TABLE enterprise_entry_tokens ADD COLUMN auto_join BOOLEAN NOT NULL DEFAULT FALSE"
+                )
 
         for statement in statements:
             connection.execute(text(statement))
@@ -207,3 +217,56 @@ def _ensure_enterprise_schema() -> None:
                     """
                 )
             )
+
+
+def _ensure_cocreation_schema() -> None:
+    """补齐企业共创视频字段:creations 表加企业/模版标记列,模版表加互动剧本字段。"""
+    inspector = inspect(engine)
+    if "creations" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("creations")}
+    statements: list[str] = []
+    if "enterprise_id" not in columns:
+        statements.append("ALTER TABLE creations ADD COLUMN enterprise_id INTEGER")
+    if "template_id" not in columns:
+        statements.append("ALTER TABLE creations ADD COLUMN template_id INTEGER")
+    if "template_name" not in columns:
+        statements.append(
+            "ALTER TABLE creations ADD COLUMN template_name VARCHAR(100) NOT NULL DEFAULT ''"
+        )
+    if "cocreation_materials" not in columns:
+        default = "'[]'::json" if engine.dialect.name == "postgresql" else "'[]'"
+        statements.append(
+            f"ALTER TABLE creations ADD COLUMN cocreation_materials JSON NOT NULL DEFAULT {default}"
+        )
+
+    if "enterprise_video_templates" in inspector.get_table_names():
+        template_columns = {
+            column["name"] for column in inspector.get_columns("enterprise_video_templates")
+        }
+        if "first_frame_prompt" not in template_columns:
+            statements.append("ALTER TABLE enterprise_video_templates ADD COLUMN first_frame_prompt TEXT NOT NULL DEFAULT ''")
+        if "image_model" not in template_columns:
+            statements.append(
+                "ALTER TABLE enterprise_video_templates ADD COLUMN image_model VARCHAR(200) NOT NULL DEFAULT ''"
+            )
+        if "member_photo" not in template_columns:
+            statements.append(
+                "ALTER TABLE enterprise_video_templates ADD COLUMN member_photo VARCHAR(20) NOT NULL DEFAULT 'none'"
+            )
+        if "member_photo_hint" not in template_columns:
+            statements.append(
+                "ALTER TABLE enterprise_video_templates ADD COLUMN member_photo_hint VARCHAR(200) NOT NULL DEFAULT ''"
+            )
+        if "first_frame_confirm" not in template_columns:
+            statements.append(
+                "ALTER TABLE enterprise_video_templates ADD COLUMN first_frame_confirm BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        if "interaction_options" not in template_columns:
+            default = "'[]'::json" if engine.dialect.name == "postgresql" else "'[]'"
+            statements.append(
+                f"ALTER TABLE enterprise_video_templates ADD COLUMN interaction_options JSON NOT NULL DEFAULT {default}"
+            )
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))

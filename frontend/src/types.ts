@@ -41,9 +41,53 @@ export interface Creation {
   chat_model: string
   image_model: string
   video_model: string
+  // 企业共创任务:enterprise_id 非空表示基于企业模版生成
+  enterprise_id?: number | null
+  template_id?: number | null
+  template_name?: string
   vlog_project_id: number | null
   created_at: string
   updated_at: string
+}
+
+// ---- 企业共创视频 ----
+
+export interface CoCreationTemplate {
+  id: number
+  name: string
+  description: string
+  /** 模版固定的画面要求,生成时拼在创意前面 */
+  prompt: string
+  chat_model: string
+  video_model: string
+  video_provider: string
+  duration: number
+  is_active: boolean
+  sort_order: number
+  /** 互动剧本:出镜要求 none/required/optional */
+  member_photo: 'none' | 'required' | 'optional'
+  member_photo_hint: string
+  /** 首帧生成后是否需要成员确认再生成视频 */
+  first_frame_confirm: boolean
+  /** 预设剧情选项,点选即用 */
+  interaction_options: string[]
+  /** 绑定的 IP 形象参考图数量 */
+  character_asset_count: number
+  /** 模版封面地址(企业素材,需登录访问) */
+  cover_url: string | null
+}
+
+export interface CoCreationFirstFrame {
+  image_path: string
+  url: string
+}
+
+export interface CoCreationStatus {
+  available: boolean
+  reason: string
+  templates: CoCreationTemplate[]
+  used: number
+  limit: number
 }
 
 export type ImageSource = 'none' | 'generate' | 'upload'

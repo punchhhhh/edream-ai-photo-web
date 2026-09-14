@@ -172,7 +172,11 @@ class EnterpriseMembership(Base):
 
 
 class EnterpriseEntryToken(Base):
-    """企业专属业务入口；Token 只用于定位企业，仍必须校验当前 Owner。"""
+    """企业专属业务入口；Token 只用于定位企业，Owner 仍须校验成员关系。
+
+    auto_join 打开后，任何登录用户通过链接访问即自动成为企业成员
+    (role=member, status=active)，无需企业二次确认，即可使用共创能力。
+    """
 
     __tablename__ = "enterprise_entry_tokens"
 
@@ -182,6 +186,8 @@ class EnterpriseEntryToken(Base):
     )
     token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    # 链接访客自动加入企业(共创等成员能力随之开放);关闭后仅 Owner 可用链接定位企业
+    auto_join: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -331,6 +337,85 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class EnterpriseVideoTemplate(Base):
+    """企业共创视频模版:企业主/管理员配置,成员基于模版用企业主的网关密钥生成视频。
+
+    网关调用参数(地址/密钥)不在模版里保存:生成时优先用企业主的默认模型配置,
+    没有时按企业 Owner 的 Casdoor 标识从 new-api 内部接口实时取 system 密钥,
+    模版只保存模型与提示词约束。
+    """
+
+    __tablename__ = "enterprise_video_templates"
+    __table_args__ = (
+        Index("ix_enterprise_video_templates_enterprise_active", "enterprise_id", "is_active"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enterprise_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    # 给成员看的模版说明
+    description: Mapped[str] = mapped_column(String(500), default="")
+    # 模版固定的画面要求,生成时拼在成员创意前面
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    # 互动剧本:首帧合成用的构图要求;为空时退化为用 prompt 合成
+    first_frame_prompt: Mapped[str] = mapped_column(Text, default="")
+    # 首帧合成用的图像模型;为空时用企业主默认配置的 image_model 或平台默认
+    image_model: Mapped[str] = mapped_column(String(200), default="")
+    # 可选:提供 AI 拓展能力(用企业主的网关密钥调用)
+    chat_model: Mapped[str] = mapped_column(String(200), default="")
+    video_model: Mapped[str] = mapped_column(String(200), default="")
+    # video_generations = new-api 任务式接口;openai_videos = Sora 风格 /v1/videos
+    video_provider: Mapped[str] = mapped_column(String(50), default="video_generations")
+    duration: Mapped[int] = mapped_column(Integer, default=5)
+    negative_prompt: Mapped[str] = mapped_column(Text, default="")
+    # 成员出镜要求:none = 不出镜;required = 必须上传照片;optional = 可选上传
+    member_photo: Mapped[str] = mapped_column(String(20), default="none")
+    member_photo_hint: Mapped[str] = mapped_column(String(200), default="")
+    # 首帧生成后是否需要成员确认再继续生成视频(企业按模版成熟度/预算选择)
+    first_frame_confirm: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 预设的剧情选项,成员点选即用;不填则只展示自由输入
+    interaction_options: Mapped[list[str]] = mapped_column(JSON, default=list)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnterpriseTemplateAsset(Base):
+    """模版绑定的企业素材:character_reference = IP 形象参考图(进首帧合成);
+    prompt_text = 特征文字(注入提示词);cover = 模版封面(成员端卡片展示)。
+    绑定不锁版本,生成时取素材当前启用版本并在任务上做快照,便于追溯与复现。
+    """
+
+    __tablename__ = "enterprise_template_assets"
+    __table_args__ = (
+        Index("uq_template_asset", "template_id", "asset_id", "usage", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    template_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprise_video_templates.id", ondelete="CASCADE"), index=True
+    )
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("enterprise_assets.id", ondelete="CASCADE"), index=True
+    )
+    # character_reference / prompt_text / cover
+    usage: Mapped[str] = mapped_column(String(30))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Creation(Base):
     """一次视频生成任务的完整记录。"""
 
@@ -375,6 +460,18 @@ class Creation(Base):
     chat_model: Mapped[str] = mapped_column(String(200), default="")
     image_model: Mapped[str] = mapped_column(String(200), default="")
     video_model: Mapped[str] = mapped_column(String(200), default="")
+
+    # 企业共创任务:enterprise_id 非空表示基于企业模版、用企业主网关密钥生成
+    enterprise_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enterprises.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enterprise_video_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    # 模版名快照,模版删除后历史记录仍可展示
+    template_name: Mapped[str] = mapped_column(String(100), default="")
+    # 共创素材快照:[{asset_id, version_id, usage, name}],记录本次生成实际使用的素材版本
+    cocreation_materials: Mapped[list[dict]] = mapped_column(JSON, default=list)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

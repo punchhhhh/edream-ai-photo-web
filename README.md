@@ -102,6 +102,8 @@ npm run dev                       # localhost:5173(已代理 /api、/media 到 8
 
 打开页面 → 「模型配置」→ 新增:
 
+**一键 new-api 默认配置**:服务端配置好 new-api 网关(`NEW_API_BASE_URL` / `NEW_API_INTERNAL_KEY_ID` / `NEW_API_INTERNAL_KEY`)后,弹窗底部的 **⚡ 一键使用 new-api 默认配置** 可以跳过手工填写——后端按当前登录用户的 Casdoor 标识(`oauth_sub`)调 new-api 内部接口取该用户的 `system` 密钥,直接落库为「new-api 默认配置」并设为默认,同时预填平台默认模型。重复点击是幂等的:只刷新网关地址与密钥,模型字段只补空缺、不覆盖已选;密钥全程不出后端,响应只有掩码。若用户在 new-api 停用了 `system` 令牌,按钮会提示重新启用后再试。
+
 | 字段 | 说明 |
 | --- | --- |
 | API 地址 | new-api 地址,填到域名或 `/v1` 均可 |
@@ -152,6 +154,7 @@ npm run dev                       # localhost:5173(已代理 /api、/media 到 8
 | GET/POST | `/api/configs` | 配置列表 / 新增(响应只有 `api_key_masked`) |
 | PUT/DELETE | `/api/configs/{id}` | 编辑(密钥留空=保留)/ 删除 |
 | POST | `/api/configs/test` | 测试连接:传 `config_id` 用存储密钥测,或表单里填地址+密钥 |
+| POST | `/api/configs/newapi-default` | 一键 new-api 默认配置:按当前用户 Casdoor 标识取网关 `system` 密钥并落库(幂等,预填平台默认模型) |
 | GET | `/api/styles` | 风格预设列表(创作台风格选择数据源) |
 | POST | `/api/expand` | AI 文本拓展(命中风格预设时拼入画面语言要点) |
 | POST | `/api/generate-image` | 文生图(首帧) |
@@ -232,6 +235,9 @@ Vlog 工作台按用户手动添加的片段组工作：每组可以选择 1–9
 | `SESSION_COOKIE_SECURE` | `false` | HTTPS 部署时设 true |
 | `CORS_ORIGINS` | localhost 三件套 | 跨域来源,逗号分隔;生产改为实际前端域名 |
 | `DEV_AUTH_SUB` | `dev-user` | dev 模式固定用户标识 |
+| `NEW_API_BASE_URL` | 空 | new-api 网关地址,`https://域名`(不带 `/v1`) |
+| `NEW_API_INTERNAL_KEY_ID` / `NEW_API_INTERNAL_KEY` | 空 | new-api 内部接口鉴权头(X-Key-Id / X-Key),在 new-api 后台配置;三项任一留空,一键默认配置不可用、共创整体关闭 |
+| `NEW_API_DEFAULT_CHAT_MODEL` / `NEW_API_DEFAULT_IMAGE_MODEL` / `NEW_API_DEFAULT_VIDEO_MODEL` | `deepseek-v4-flash` / `gpt-image-2` / `wan3_720p` | 一键 new-api 默认配置的预填模型(只补空缺,不覆盖用户已选) |
 | `ENTERPRISE_BUSINESS_BASE_URL` | 当前请求域名 | 企业 URL/二维码指向的主业务基址，独立运营域名部署时必须配置 |
 
 ## 后续规划位

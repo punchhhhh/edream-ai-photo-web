@@ -1230,6 +1230,32 @@ a {
   font-size: 12px;
   line-height: 1.65;
 }
+.entry-auto-join {
+  margin-top: 16px;
+}
+.entry-auto-join-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+.entry-auto-join-toggle input {
+  margin-top: 3px;
+  flex: none;
+}
+.entry-auto-join-toggle > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.entry-auto-join-toggle small {
+  color: var(--ops-muted);
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.6;
+}
 .entry-actions {
   margin-top: 24px;
   display: flex;
@@ -1490,4 +1516,85 @@ a {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+/* ---- 视频共创 ---- */
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-direction: row !important;
+}
+.checkbox-line input[type="checkbox"] {
+  width: auto;
+}
+.cocreation-idea {
+  display: inline-block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* ---- 共创模版:素材绑定与封面 ---- */
+.asset-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--ops-border, #d8dee9);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(247, 249, 252, 0.6);
+}
+
+.asset-picker > strong {
+  font-size: 13px;
+}
+
+.asset-picker > small {
+  color: #6b7684;
+}
+
+.asset-picker-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.asset-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.asset-option small {
+  color: #8a94a3;
+}
+
+.template-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.template-thumb {
+  width: 56px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--ops-border, #d8dee9);
+  flex: none;
+}
+
+.template-thumb.placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  background: #eef1f6;
 }

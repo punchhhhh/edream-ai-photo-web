@@ -12,11 +12,16 @@ from ..schemas import (
     ModelConfigOut,
     ModelConfigUpdateIn,
 )
+from ..services import newapi_internal
 from ..services.ai_client import AICallError, AIClient
+from ..services.newapi_internal import NewApiInternalError
+from ..settings import settings
 from .auth import get_current_user
 
 router = APIRouter(prefix="/configs", tags=["model-configs"])
 
+# 一键配置使用的固定名称;重复调用按名称找到旧配置只刷新网关地址与密钥
+NEWAPI_DEFAULT_CONFIG_NAME = "new-api 默认配置"
 
 def _get_or_404(db: Session, user: User, config_id: int) -> ModelConfig:
     config = db.get(ModelConfig, config_id)
@@ -133,6 +138,59 @@ def test_config(
         },
         note=f"连接成功,网关共有 {len(models)} 个可用模型" if models else "连接成功,但网关未返回模型列表",
     )
+
+
+@router.post("/newapi-default", response_model=ModelConfigOut)
+def use_newapi_default_config(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """一键生成 new-api 默认配置:按当前用户的 Casdoor 标识到网关取其 system 密钥。
+
+    密钥只在服务端流转、不回传前端;同名配置已存在时仅刷新网关地址与密钥,
+    并按 settings 里的平台默认模型补齐为空的模型字段(不覆盖用户已选)。
+    """
+    base_url = settings.new_api_base_url.strip()
+    if not (base_url and settings.new_api_internal_key_id.strip() and settings.new_api_internal_key.strip()):
+        raise HTTPException(502, "new-api 网关未配置,请联系平台管理员")
+    try:
+        api_key = newapi_internal.get_user_system_key(
+            user.oauth_sub,
+            deactivated_message="你的 new-api system 令牌已停用,请在 new-api 控制台重新启用后重试",
+        )
+    except NewApiInternalError as e:
+        raise HTTPException(502, str(e)) from e
+
+    model_defaults = {
+        "chat_model": settings.new_api_default_chat_model.strip(),
+        "image_model": settings.new_api_default_image_model.strip(),
+        "video_model": settings.new_api_default_video_model.strip(),
+    }
+    config = db.scalar(
+        select(ModelConfig).where(ModelConfig.user_id == user.id, ModelConfig.name == NEWAPI_DEFAULT_CONFIG_NAME)
+    )
+    if config is None:
+        config = ModelConfig(
+            user_id=user.id,
+            name=NEWAPI_DEFAULT_CONFIG_NAME,
+            base_url=base_url,
+            api_key=api_key,
+            **model_defaults,
+        )
+        db.add(config)
+        db.flush()
+    else:
+        config.base_url = base_url
+        config.api_key = api_key
+        # 只补空缺的模型,不覆盖用户已选
+        for field, value in model_defaults.items():
+            if value and not getattr(config, field):
+                setattr(config, field, value)
+    config.is_default = True
+    _clear_other_defaults(db, user, config.id)
+    db.commit()
+    db.refresh(config)
+    return ModelConfigOut.from_config(config)
 
 
 @router.delete("/{config_id}")

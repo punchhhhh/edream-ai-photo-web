@@ -1,4 +1,5 @@
 import type {
+  CoCreationVideo,
   Enterprise,
   EnterpriseAsset,
   EnterpriseEntry,
@@ -7,6 +8,8 @@ import type {
   PlatformAdmin,
   Purpose,
   Quota,
+  VideoTemplate,
+  VideoTemplateForm,
 } from "./types";
 import { isExplicitlyLoggedOut } from "../authNavigation";
 
@@ -122,6 +125,11 @@ export const getEnterpriseEntry = () =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry");
 export const createEnterpriseEntry = () =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", { method: "POST" });
+export const updateEnterpriseEntry = (payload: { auto_join: boolean }) =>
+  request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 export const disableEnterpriseEntry = () =>
   request<EnterpriseEntry>("/api/ops/v1/enterprise-entry", { method: "DELETE" });
 
@@ -165,3 +173,23 @@ export const deletePlatformAdmin = (userId: number) =>
   request<{ ok: boolean }>(`/api/ops/v1/admin/platform-admins/${userId}`, {
     method: "DELETE",
   });
+
+// ---- 企业共创视频 ----
+export const listVideoTemplates = () =>
+  request<VideoTemplate[]>("/api/ops/v1/video-templates");
+export const createVideoTemplate = (payload: VideoTemplateForm) =>
+  request<VideoTemplate>("/api/ops/v1/video-templates", json("POST", payload));
+export const updateVideoTemplate = (
+  id: number,
+  payload: Partial<VideoTemplateForm>,
+) =>
+  request<VideoTemplate>(
+    `/api/ops/v1/video-templates/${id}`,
+    json("PATCH", payload),
+  );
+export const deleteVideoTemplate = (id: number) =>
+  request<{ ok: boolean }>(`/api/ops/v1/video-templates/${id}`, {
+    method: "DELETE",
+  });
+export const listCoCreationVideos = () =>
+  request<CoCreationVideo[]>("/api/ops/v1/cocreation/videos");
