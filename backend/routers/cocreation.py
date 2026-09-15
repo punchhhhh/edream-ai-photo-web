@@ -259,6 +259,16 @@ def create_cocreation_video(
     if template.member_photo == "required" and first_frame is None:
         raise HTTPException(422, "本模版需要出镜,请先上传照片并合成合拍画面")
 
+    # 首帧之外的参考图(中间画面/场景参考):逐项校验归属,去重且不与首帧重复。
+    # 没有首帧时多图通道里第一张参考图会占据"视频起点"位,语义错位,直接拒绝
+    if payload.reference_photo_paths and first_frame is None:
+        raise HTTPException(422, "参考图需在合成合拍首帧后才能附带提交")
+    reference_paths: list[str] = []
+    for path in payload.reference_photo_paths:
+        validated = _member_media_path(user, path)
+        if validated != first_frame and validated not in reference_paths:
+            reference_paths.append(validated)
+
     # 与个人创作共用"同用户同时只有一个生成中任务"的约束
     active = db.scalars(
         select(Creation)
@@ -283,6 +293,7 @@ def create_cocreation_video(
         expanded_prompt=cocreation.combine_prompt(template, expanded, ip_features),
         image_source="generated" if first_frame else "none",
         image_path=first_frame,
+        reference_image_paths=reference_paths,
         duration=template.duration,
         status="pending",
         config_name=f"企业共创 · {template.name}",

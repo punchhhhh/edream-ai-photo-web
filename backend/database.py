@@ -255,6 +255,11 @@ def _ensure_cocreation_schema() -> None:
         )
     if "enterprise_grant_id" not in columns:
         statements.append("ALTER TABLE creations ADD COLUMN enterprise_grant_id INTEGER")
+    if "reference_image_paths" not in columns:
+        default = "'[]'::json" if engine.dialect.name == "postgresql" else "'[]'"
+        statements.append(
+            f"ALTER TABLE creations ADD COLUMN reference_image_paths JSON NOT NULL DEFAULT {default}"
+        )
 
     if "enterprise_video_templates" in inspector.get_table_names():
         template_columns = {

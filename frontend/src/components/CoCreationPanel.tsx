@@ -23,21 +23,31 @@ interface Props {
   onStatusChange: (status: CoCreationStatus) => void
 }
 
+interface MemberPhoto {
+  path: string
+  url: string
+}
+
+// 首帧之外的附加参考图张数上限(与后端 CoCreationVideoCreateIn 校验一致)
+const MAX_REFERENCE_PHOTOS = 3
+
 export default function CoCreationPanel({ status, grantId, onStatusChange }: Props) {
   const [templateId, setTemplateId] = useState<number | null>(status.templates[0]?.id ?? null)
   const [text, setText] = useState('')
   const [expanded, setExpanded] = useState('')
   const [expanding, setExpanding] = useState(false)
-  const [photoPath, setPhotoPath] = useState<string | null>(null)
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null)
+  const [mainPhoto, setMainPhoto] = useState<MemberPhoto | null>(null)
+  const [refPhotos, setRefPhotos] = useState<MemberPhoto[]>([])
   const [photoSkipped, setPhotoSkipped] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [uploadingRefs, setUploadingRefs] = useState(false)
   const [frame, setFrame] = useState<CoCreationFirstFrame | null>(null)
   const [framing, setFraming] = useState(false)
   const [creation, setCreation] = useState<Creation | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const photoInputId = useId()
+  const refInputId = useId()
 
   const template: CoCreationTemplate | null =
     status.templates.find((t) => t.id === templateId) ?? null
@@ -46,9 +56,9 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
   const grantUsable = status.available
 
   const needsPhoto = !!template && template.member_photo !== 'none'
-  const photoReady = !!photoPath || (template?.member_photo === 'optional' && photoSkipped)
+  const photoReady = !!mainPhoto || (template?.member_photo === 'optional' && photoSkipped)
   // 有成员照片或绑定了 IP 形象参考图时,先合成「合拍首帧」再图生视频
-  const needsFirstFrame = !!template && (!!photoPath || template.character_asset_count > 0)
+  const needsFirstFrame = !!template && (!!mainPhoto || template.character_asset_count > 0)
   const photoHint = template?.member_photo_hint || '上传一张清晰的正面照,和企业 IP 同框出镜'
   const confirmMode = template?.first_frame_confirm !== false
 
@@ -75,8 +85,8 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
   const switchTemplate = (t: CoCreationTemplate) => {
     setTemplateId(t.id)
     setExpanded('')
-    setPhotoPath(null)
-    setPhotoUrl(null)
+    setMainPhoto(null)
+    setRefPhotos([])
     setPhotoSkipped(false)
     setFrame(null)
     setCreation(null)
@@ -88,14 +98,34 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
     setError('')
     try {
       const media = await uploadImage(file)
-      setPhotoPath(media.image_path)
-      setPhotoUrl(media.url)
+      setMainPhoto({ path: media.image_path, url: media.url })
       setPhotoSkipped(false)
       setFrame(null)
     } catch (e) {
       setError((e as Error).message)
     } finally {
       setUploadingPhoto(false)
+    }
+  }
+
+  const doUploadRefs = async (files: File[]) => {
+    // 参考图上限 3 张,多选时截断并提示
+    const picked = files.slice(0, MAX_REFERENCE_PHOTOS - refPhotos.length)
+    if (picked.length < files.length) {
+      setError(`参考图最多 ${MAX_REFERENCE_PHOTOS} 张,已忽略多余的 ${files.length - picked.length} 张`)
+    }
+    if (!picked.length) return
+    setUploadingRefs(true)
+    try {
+      const uploaded = await Promise.all(picked.map((file) => uploadImage(file)))
+      setRefPhotos((prev) => [
+        ...prev,
+        ...uploaded.map((media) => ({ path: media.image_path, url: media.url })),
+      ].slice(0, MAX_REFERENCE_PHOTOS))
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setUploadingRefs(false)
     }
   }
 
@@ -123,7 +153,7 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
     try {
       const result = await composeCocreationFirstFrame(grantId, template.id, {
         text: text.trim() || undefined,
-        member_photo_path: photoPath ?? undefined,
+        member_photo_path: mainPhoto?.path,
       })
       setFrame(result)
       return result.image_path
@@ -165,6 +195,7 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
         text: text.trim(),
         expanded_prompt: expanded.trim() || undefined,
         first_frame_path: effectiveFrame || undefined,
+        reference_photo_paths: refPhotos.length ? refPhotos.map((p) => p.path) : undefined,
       })
       setCreation(c)
       getCocreationStatus(grantId).then(onStatusChange).catch(() => {})
@@ -321,32 +352,97 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
                 e.target.value = ''
               }}
             />
-            {photoUrl ? (
-              <div className="photo-preview">
-                <img src={photoUrl} alt="我的照片" />
-                <label className="btn" htmlFor={photoInputId}>
-                  换一张
-                </label>
+            <input
+              id={refInputId}
+              className="file-input-native"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? [])
+                if (files.length) void doUploadRefs(files)
+                e.target.value = ''
+              }}
+            />
+
+            <div className="photo-slot">
+              <div className="photo-slot-head">
+                <span className="photo-slot-tag main">第 1 张 · 合拍主图</span>
+                <span className="muted small">用于生成你和 IP 的同框首帧画面</span>
               </div>
-            ) : (
-              <div className="photo-actions">
-                <label
-                  className={`btn primary ${uploadingPhoto ? 'disabled' : ''}`}
-                  htmlFor={photoInputId}
-                  aria-disabled={uploadingPhoto}
-                  onClick={(event) => {
-                    if (uploadingPhoto) event.preventDefault()
-                  }}
-                >
-                  {uploadingPhoto ? '上传中…' : '📷 选择照片'}
-                </label>
-                {template.member_photo === 'optional' && (
-                  <button className="btn" disabled={uploadingPhoto} onClick={() => setPhotoSkipped(true)}>
-                    不出镜,跳过
-                  </button>
-                )}
+              {mainPhoto ? (
+                <div className="photo-preview">
+                  <img src={mainPhoto.url} alt="我的照片" />
+                  <label className="btn" htmlFor={photoInputId}>
+                    换一张
+                  </label>
+                </div>
+              ) : (
+                <div className="photo-actions">
+                  <label
+                    className={`btn primary ${uploadingPhoto ? 'disabled' : ''}`}
+                    htmlFor={photoInputId}
+                    aria-disabled={uploadingPhoto}
+                    onClick={(event) => {
+                      if (uploadingPhoto) event.preventDefault()
+                    }}
+                  >
+                    {uploadingPhoto ? '上传中…' : '📷 选择主图'}
+                  </label>
+                  {template.member_photo === 'optional' && (
+                    <button className="btn" disabled={uploadingPhoto} onClick={() => setPhotoSkipped(true)}>
+                      不出镜,跳过
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="photo-slot">
+              <div className="photo-slot-head">
+                <span className="photo-slot-tag ref">第 2 张起 · 视频参考图</span>
+                <span className="muted small">
+                  生成视频时作为中间画面一起提交,不参与首帧合成 · 可选,最多 {MAX_REFERENCE_PHOTOS} 张
+                </span>
               </div>
-            )}
+              {refPhotos.length > 0 && (
+                <div className="ref-photo-list">
+                  {refPhotos.map((photo, index) => (
+                    <div key={photo.path} className="ref-photo-item">
+                      <img src={photo.url} alt={`参考图 ${index + 1}`} />
+                      <button
+                        type="button"
+                        className="ref-photo-remove"
+                        aria-label="移除参考图"
+                        disabled={uploadingRefs}
+                        onClick={() =>
+                          setRefPhotos((prev) => prev.filter((x) => x.path !== photo.path))
+                        }
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {refPhotos.length < MAX_REFERENCE_PHOTOS && (
+                <div className="photo-actions">
+                  <label
+                    className={`btn ${uploadingRefs ? 'disabled' : ''}`}
+                    htmlFor={refInputId}
+                    aria-disabled={uploadingRefs}
+                    onClick={(event) => {
+                      if (uploadingRefs) event.preventDefault()
+                    }}
+                  >
+                    {uploadingRefs ? '上传中…' : '➕ 添加参考图'}
+                  </label>
+                  {refPhotos.length === 0 && (
+                    <span className="muted small">不添加则仅用首帧生成视频</span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </section>
       )}
@@ -401,7 +497,7 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
                 <div>
                   <h3>合拍画面</h3>
                   <p>
-                    {photoPath
+                    {mainPhoto
                       ? confirmMode
                         ? '先合成你和 IP 的同框画面,满意后再生成视频'
                         : '自动合成你和 IP 的同框画面并生成视频,无需确认'
@@ -458,7 +554,7 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
             nextStepNo(),
             creation?.status === 'completed',
             '生成视频',
-            `时长 ${template.duration}s(由企业模版设定) · 使用企业网关额度,每人限 ${status.limit} 个`,
+            `时长 ${template.duration}s(由企业模版设定)${refPhotos.length ? ` · 首帧 + ${refPhotos.length} 张参考图` : ''} · 使用企业网关额度,每人限 ${status.limit} 个`,
             videoStep,
           )}
         </>

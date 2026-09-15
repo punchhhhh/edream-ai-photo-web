@@ -169,6 +169,8 @@ export const createCocreationVideo = (payload: {
   text: string
   expanded_prompt?: string
   first_frame_path?: string
+  // 首帧之外随视频生成一起提交的参考图(中间画面),最多 3 张
+  reference_photo_paths?: string[]
 }) =>
   request<Creation>('/api/cocreation/videos', {
     method: 'POST',

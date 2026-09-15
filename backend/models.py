@@ -517,6 +517,8 @@ class Creation(Base):
     image_source: Mapped[str] = mapped_column(String(20), default="none")
     # 参考图的存储 key,形如 users/{uid}/uploads|images/xxx.png(历史数据可能是 images|uploads/xxx.png)
     image_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 共创附加参考图存储 key 列表:首帧(image_path)之外,随视频生成一起提交的中间/参考画面
+    reference_image_paths: Mapped[list[str]] = mapped_column(JSON, default=list)
     # 成片的存储 key,形如 users/{uid}/videos/xxx.mp4
     video_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 远端回退地址:本地/对象存储文件优先(播放地址由 video_path 在输出时推导);仅下载失败时存网关远端 URL

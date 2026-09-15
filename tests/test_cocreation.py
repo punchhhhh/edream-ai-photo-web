@@ -1008,6 +1008,60 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
         )
         assert stolen.status_code == 422
 
+        # 参考图同样不能引用别人的图片
+        ref_photo = client.post(
+            "/api/upload",
+            files={"file": ("mid.png", _png_bytes(), "image/png")},
+            headers=_headers("owner-ff"),
+        )
+        assert ref_photo.status_code == 200, ref_photo.text
+        stolen_ref = client.post(
+            "/api/cocreation/videos",
+            json={
+                "template_id": template["id"],
+                "grant_id": grant_id,
+                "text": "创意",
+                "first_frame_path": frame_path,
+                "reference_photo_paths": ["users/99999/uploads/y.png"],
+            },
+            headers=_headers("owner-ff"),
+        )
+        assert stolen_ref.status_code == 422
+        # 参考图超过 3 张直接 422(schema 层拦截)
+        too_many = client.post(
+            "/api/cocreation/videos",
+            json={
+                "template_id": template["id"],
+                "grant_id": grant_id,
+                "text": "创意",
+                "first_frame_path": frame_path,
+                "reference_photo_paths": [
+                    ref_photo.json()["image_path"],
+                    ref_photo.json()["image_path"],
+                    "users/99999/uploads/y.png",
+                    "users/99999/uploads/z.png",
+                ],
+            },
+            headers=_headers("owner-ff"),
+        )
+        assert too_many.status_code == 422
+        # 没有首帧时不接受参考图:第一张参考图会占据多图通道的"视频起点"位
+        no_frame_template = _create_template(
+            client, "owner-ff", name="不出镜模版", member_photo="none"
+        )
+        no_frame = client.post(
+            "/api/cocreation/videos",
+            json={
+                "template_id": no_frame_template["id"],
+                "grant_id": grant_id,
+                "text": "创意",
+                "reference_photo_paths": [ref_photo.json()["image_path"]],
+            },
+            headers=_headers("owner-ff"),
+        )
+        assert no_frame.status_code == 422
+        assert "首帧" in no_frame.json()["detail"]
+
         created = client.post(
             "/api/cocreation/videos",
             json={
@@ -1015,6 +1069,11 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
                 "grant_id": grant_id,
                 "text": "和 IP 打招呼",
                 "first_frame_path": frame_path,
+                "reference_photo_paths": [
+                    ref_photo.json()["image_path"],
+                    # 与首帧重复会被去掉,不重复占用参考位
+                    frame_path,
+                ],
             },
             headers=_headers("owner-ff"),
         )
@@ -1028,7 +1087,7 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
         assert "橙色小猫IP" in body["expanded_prompt"]
         assert body["expanded_prompt"].endswith("和 IP 打招呼")
 
-        # 素材版本快照落库,便于追溯
+        # 素材版本快照落库,便于追溯;参考图去重后只保留成员上传的那张
         from backend.database import SessionLocal
         from backend.models import Creation
 
@@ -1039,6 +1098,39 @@ def test_first_frame_compose_and_video_submit(gateway_ready, monkeypatch) -> Non
                 "character_reference",
                 "prompt_text",
             }
+            assert row.reference_image_paths == [ref_photo.json()["image_path"]]
+
+            # 管线把首帧打头、参考图随后,一起作为多图输入传给视频模型
+            from backend import storage as _storage
+            from backend.services import pipeline as creation_pipeline
+
+            class _FakeVideoClient:
+                def __init__(self, base_url, api_key, provider="video_generations"):
+                    captured["gateway"] = (base_url, api_key, provider)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+                def run_video(self, model, prompt, **kwargs):
+                    captured["video"] = (model, prompt, kwargs)
+                    return {"url": None, "content": b"fake-mp4", "task_id": "task-1"}
+
+            monkeypatch.setattr(creation_pipeline, "AIClient", _FakeVideoClient)
+            creation_pipeline._generate_video(db, row)
+            db.refresh(row)
+            assert row.status == "completed"
+            assert row.video_path
+
+            _, _, video_kwargs = captured["video"]
+            inputs = video_kwargs["image_inputs"]
+            assert inputs is not None
+            assert len(inputs) == 2
+            # 第一张是合拍首帧,第二张是成员上传的参考图
+            assert inputs[0][0] == _storage.read(frame_path)
+            assert inputs[1][0] == _storage.read(ref_photo.json()["image_path"])
 
 
 def test_first_frame_guardrails(gateway_ready, monkeypatch) -> None:

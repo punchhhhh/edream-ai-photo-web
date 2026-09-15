@@ -341,3 +341,7 @@ class CoCreationVideoCreateIn(BaseModel):
     expanded_prompt: str = Field(default="", max_length=4000)
     # /api/cocreation/first-frame 返回的首帧存储 key;传了走图生视频
     first_frame_path: str | None = Field(default=None, max_length=500)
+    # 首帧之外随视频生成一起提交的参考图存储 key(中间画面/场景参考),最多 3 张;逐项校验归属
+    reference_photo_paths: list[Annotated[str, Field(max_length=500)]] = Field(
+        default_factory=list, max_length=3
+    )

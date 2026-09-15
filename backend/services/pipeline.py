@@ -180,6 +180,26 @@ def _generate_video(session, creation: Creation, *, resume: bool = False) -> Non
             raise AICallError("图片文件不存在或已被清理,请重新生成或上传后再提交") from None
         image_mime = IMAGE_MIME_BY_EXT.get(Path(creation.image_path).suffix.lower(), "image/png")
 
+    # 共创附加参考图:首帧(image_path)打头,后续参考图按提交顺序一起传给视频模型;
+    # 有参考图时走多图通道,首帧作为视频起点,其余作为中间画面/参考
+    image_inputs: list[tuple[bytes, str]] | None = None
+    if creation.reference_image_paths:
+        image_inputs = []
+        if image_bytes is not None:
+            image_inputs.append((image_bytes, image_mime or "image/png"))
+        for ref_path in creation.reference_image_paths:
+            if not media.is_safe_rel(ref_path):
+                raise AICallError("参考图路径不合法,请重新上传后再提交")
+            try:
+                image_inputs.append(
+                    (
+                        storage.read(ref_path),
+                        IMAGE_MIME_BY_EXT.get(Path(ref_path).suffix.lower(), "image/png"),
+                    )
+                )
+            except FileNotFoundError:
+                raise AICallError("参考图文件不存在或已被清理,请重新上传后再提交") from None
+
     creation.status = "generating_video"
     creation.error = None
     session.commit()
@@ -221,6 +241,7 @@ def _generate_video(session, creation: Creation, *, resume: bool = False) -> Non
             creation.expanded_prompt or creation.input_text,
             image_bytes=image_bytes,
             image_mime=image_mime,
+            image_inputs=image_inputs,
             negative_prompt=negative_prompt,
             duration=creation.duration,
             poll_interval=settings.video_poll_interval,
