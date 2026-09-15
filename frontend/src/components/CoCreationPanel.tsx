@@ -5,6 +5,7 @@ import {
   expandCocreation,
   getCreation,
   getCocreationStatus,
+  listCreations,
   uploadImage,
 } from '../api'
 import {
@@ -46,6 +47,12 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
   const [creation, setCreation] = useState<Creation | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  // 历史共创作品入口:弹层列表 + 播放器
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [history, setHistory] = useState<Creation[]>([])
+  const [playing, setPlaying] = useState<Creation | null>(null)
   const photoInputId = useId()
   const refInputId = useId()
 
@@ -214,6 +221,83 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
     setError('')
   }
 
+  const openHistory = async () => {
+    setShowHistory(true)
+    setHistoryLoading(true)
+    setHistoryError('')
+    try {
+      // 历史接口返回本人全部创作,这里只保留基于企业模版生成的共创作品
+      const all = await listCreations()
+      setHistory(all.filter((c) => c.enterprise_id != null && c.status === 'completed'))
+    } catch (e) {
+      setHistoryError((e as Error).message)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const fmtTime = (iso: string) => new Date(iso).toLocaleString('zh-CN', { hour12: false })
+
+  const historyModal = showHistory && (
+    <div className="modal-overlay" onClick={() => setShowHistory(false)}>
+      <div className="modal history-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2>我的共创作品</h2>
+          <button className="icon-btn" onClick={() => setShowHistory(false)}>
+            ✕
+          </button>
+        </div>
+        {historyError && <div className="alert error">{historyError}</div>}
+        {historyLoading ? (
+          <div className="empty">加载中…</div>
+        ) : history.length === 0 ? (
+          <div className="empty">还没有共创作品,生成第一条吧 🎬</div>
+        ) : (
+          <div className="history-list">
+            {history.map((c) => (
+              <div key={c.id} className="history-item">
+                <div className="history-thumb" onClick={() => c.video_url && setPlaying(c)}>
+                  {c.image_url ? <img src={c.image_url} alt="首帧" /> : <span className="thumb-placeholder">🎬</span>}
+                  <span className="tag">{c.template_name || '共创模版'}</span>
+                </div>
+                <div className="history-main">
+                  <div className="history-title">{c.input_text}</div>
+                  <div className="muted small">
+                    {c.duration}s · {c.video_model || '—'} · {fmtTime(c.created_at)}
+                  </div>
+                  <div className="history-actions">
+                    {c.video_url && (
+                      <>
+                        <button className="link-btn" onClick={() => setPlaying(c)}>
+                          播放
+                        </button>
+                        <a className="link-btn" href={c.video_url} download={downloadName(c)} target="_blank" rel="noreferrer">
+                          下载
+                        </a>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {playing && (
+          <div className="player-overlay" onClick={() => setPlaying(null)}>
+            <div className="player-box" onClick={(e) => e.stopPropagation()}>
+              <div className="player-title">{playing.input_text}</div>
+              <video src={playing.video_url ?? undefined} controls autoPlay />
+              <button className="btn" onClick={() => setPlaying(null)}>
+                关闭
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
   // 步骤编号按实际展示的步骤递增(不出镜的模版没有照片步骤)
   let stepNo = 0
   const nextStepNo = () => ++stepNo
@@ -260,7 +344,7 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
       {creation && generating && (
         <div className="progress">
           <span className="spinner" />
-          {STATUS_TEXT[creation.status] ?? creation.status} · 视频生成通常需要 1-5 分钟,完成后可在历史记录中查看
+          {STATUS_TEXT[creation.status] ?? creation.status} · 视频生成通常需要 1-5 分钟,完成后可在「我的共创作品」中查看
         </div>
       )}
 
@@ -270,6 +354,7 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
           <button className="btn" onClick={() => doSubmit()}>
             重试
           </button>
+          <div className="muted small">失败的任务不扣共创次数,已自动返还</div>
         </div>
       )}
 
@@ -328,6 +413,9 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
             </button>
           ))}
         </div>,
+        <button className="btn" onClick={() => void openHistory()}>
+          🎞 我的共创作品
+        </button>,
       )}
 
       {template && needsPhoto && (
@@ -559,6 +647,8 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
           )}
         </>
       )}
+
+      {historyModal}
     </main>
   )
 }
