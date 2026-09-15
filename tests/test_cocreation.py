@@ -285,7 +285,8 @@ def test_create_video_quota_and_snapshot(gateway_ready, monkeypatch) -> None:
         assert third.status_code == 403
         assert "视频次数已用完" in third.json()["detail"]
 
-        # 视频次数记在授权上，删除或失败都不会返还。
+        # 视频次数记在授权上，删除内容不返还；直接改库的终态不经过管线也不返还
+        # (真实失败路径的自动返还见 test_failed_creation_refunds_quota)。
         deleted = client.delete(
             f"/api/creations/{body['id']}", headers=_headers("owner-z")
         )
@@ -297,6 +298,130 @@ def test_create_video_quota_and_snapshot(gateway_ready, monkeypatch) -> None:
             headers=_headers("owner-z"),
         )
         assert retry.status_code == 403
+
+
+def test_failed_creation_refunds_quota(gateway_ready, monkeypatch) -> None:
+    """任务失败自动返还共创次数:used 回落、因用尽而耗尽的授权恢复可用、可直接重试。"""
+    from backend.app import create_app
+    from backend.database import SessionLocal
+    from backend.models import Creation
+    from backend.services import newapi_internal
+    from backend.services import pipeline as creation_pipeline
+    from backend.services.ai_client import AICallError
+    from backend.services.enterprise_access import refund_video_grant
+
+    class _FailingVideoClient:
+        def __init__(self, base_url, api_key, provider="video_generations"):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def run_video(self, model, prompt, **kwargs):
+            raise AICallError("网关生成失败")
+
+    monkeypatch.setattr(creation_pipeline, "AIClient", _FailingVideoClient)
+    monkeypatch.setattr(
+        newapi_internal, "get_user_system_key", lambda oidc_id, **kwargs: "sk-system-key"
+    )
+    monkeypatch.setattr(
+        "backend.routers.cocreation.start_creation_thread", lambda *a, **k: None
+    )
+    monkeypatch.setattr(settings, "cocreation_max_videos_per_user", 1)
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-refund", "S")
+        template = _create_template(client, "owner-refund")
+        grant_id = _grant_id(client, "owner-refund")
+
+        created = client.post(
+            "/api/cocreation/videos",
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "会失败的创意"},
+            headers=_headers("owner-refund"),
+        )
+        assert created.status_code == 200, created.text
+        creation_id = created.json()["id"]
+
+        # 提交即扣减:次数用尽,授权变为不可用
+        status = client.get(
+            f"/api/cocreation/status?grant_id={grant_id}", headers=_headers("owner-refund")
+        ).json()
+        assert status["used"] == 1
+        assert status["available"] is False
+
+        # 走真实管线失败路径(_run → _finish("failed")),次数自动返还
+        creation_pipeline._run(creation_id, resume=False)
+
+        with SessionLocal() as db:
+            assert db.get(Creation, creation_id).status == "failed"
+
+        status = client.get(
+            f"/api/cocreation/status?grant_id={grant_id}", headers=_headers("owner-refund")
+        ).json()
+        assert status["used"] == 0
+        assert status["available"] is True
+
+        # 返还幂等:同一任务不会重复返还
+        with SessionLocal() as db:
+            assert (
+                refund_video_grant(db, grant_id=grant_id, creation_id=creation_id) is False
+            )
+
+        # 次数回来后可以直接重试
+        retry = client.post(
+            "/api/cocreation/videos",
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "再试一次"},
+            headers=_headers("owner-refund"),
+        )
+        assert retry.status_code == 200, retry.text
+
+
+def test_reap_stale_creations_refunds_cocreation(gateway_ready, monkeypatch) -> None:
+    """看门狗回收无心跳的共创任务时同样返还次数。"""
+    from datetime import datetime, timedelta, timezone
+
+    from backend.app import create_app
+    from backend.database import SessionLocal
+    from backend.models import Creation
+    from backend.services import pipeline as creation_pipeline
+
+    monkeypatch.setattr(
+        "backend.routers.cocreation.start_creation_thread", lambda *a, **k: None
+    )
+
+    with TestClient(create_app()) as client:
+        _apply_and_approve(client, "owner-stale", "W")
+        template = _create_template(client, "owner-stale")
+        grant_id = _grant_id(client, "owner-stale")
+        created = client.post(
+            "/api/cocreation/videos",
+            json={"grant_id": grant_id, "template_id": template["id"], "text": "卡死的创意"},
+            headers=_headers("owner-stale"),
+        )
+        assert created.status_code == 200, created.text
+
+        # 模拟线程已死:心跳(updated_at)停在看门狗阈值之前
+        with SessionLocal() as db:
+            row = db.get(Creation, created.json()["id"])
+            row.status = "generating_video"
+            row.updated_at = datetime.now(timezone.utc) - timedelta(seconds=99999)
+            db.commit()
+
+        assert creation_pipeline.reap_stale_creations() == 1
+
+        with SessionLocal() as db:
+            row = db.get(Creation, created.json()["id"])
+            assert row.status == "failed"
+            assert "返还" in row.error
+
+        status = client.get(
+            f"/api/cocreation/status?grant_id={grant_id}", headers=_headers("owner-stale")
+        ).json()
+        assert status["used"] == 0
+        assert status["available"] is True
 
 
 def test_create_video_rejects_when_other_task_running(gateway_ready, monkeypatch) -> None:

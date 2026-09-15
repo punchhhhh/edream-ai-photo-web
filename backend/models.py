@@ -250,7 +250,7 @@ class EnterpriseConsumerGrant(Base):
 
 
 class EnterpriseCocreationUsageLedger(Base):
-    """企业共创视频提交流水；内容删除不会删除或回退本流水。"""
+    """企业共创视频提交流水(含失败返还 refund);内容删除不会删除或回退本流水。"""
 
     __tablename__ = "enterprise_cocreation_usage_ledger"
 

@@ -196,3 +196,39 @@ def consume_video_grant(
         )
     )
     return context
+
+
+def refund_video_grant(db: Session, *, grant_id: int, creation_id: int) -> bool:
+    """任务失败返还一次视频次数;以是否已有返还流水保证幂等,返回是否实际返还。
+
+    先锁授权行再查流水:看门狗与后台线程可能并发失败同一任务,行锁把
+    并发返还(以及与扣减,consume 锁同一行)串行化,避免重复减次。
+    仅当授权是因"次数用尽"而耗尽时,返还后才恢复为可用,过期/撤销的不动。
+    """
+    grant = db.get(EnterpriseConsumerGrant, grant_id, with_for_update=True)
+    if grant is None:
+        return False
+    already = db.scalar(
+        select(EnterpriseCocreationUsageLedger.id).where(
+            EnterpriseCocreationUsageLedger.creation_id == creation_id,
+            EnterpriseCocreationUsageLedger.operation_type == "refund",
+        )
+    )
+    if already is not None:
+        return False
+    grant.video_used = max(0, grant.video_used - 1)
+    if grant.status == "exhausted" and grant.video_used < grant.video_limit:
+        if grant.expires_at is None or aware(grant.expires_at) > utc_now():
+            grant.status = ACTIVE_GRANT_STATUS
+    db.add(
+        EnterpriseCocreationUsageLedger(
+            enterprise_id=grant.enterprise_id,
+            grant_id=grant.id,
+            user_id=grant.user_id,
+            creation_id=creation_id,
+            operation_type="refund",
+            amount=-1,
+            status="committed",
+        )
+    )
+    return True

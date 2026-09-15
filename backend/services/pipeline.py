@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from .. import media, storage
@@ -21,6 +21,7 @@ from ..database import SessionLocal
 from ..models import Creation, EnterpriseVideoTemplate, ModelConfig, StylePreset
 from ..settings import settings
 from .ai_client import AICallError, AIClient
+from .enterprise_access import refund_video_grant
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ SWEEPER_INTERVAL_SECONDS = 60.0
 def recover_interrupted_creations() -> dict[str, int]:
     """服务重启后的恢复:
     - 已提交到网关(有 video_task_id)的任务恢复轮询,不再直接判死
-    - 尚未提交成功的任务标记失败,避免并发限制把用户永久卡死
+    - 尚未提交成功的任务标记失败(共创任务返还次数),避免并发限制把用户永久卡死
     """
     with SessionLocal() as session:
         stmt = select(Creation).where(Creation.status.in_(ACTIVE_STATUSES))
@@ -62,7 +63,12 @@ def recover_interrupted_creations() -> dict[str, int]:
                 to_resume.append(creation.id)
             else:
                 creation.status = "failed"
-                creation.error = "服务重启时任务尚未成功提交到网关,已终止;请重新提交"
+                creation.error = (
+                    "服务重启时任务尚未成功提交到网关,已终止;本次共创次数已自动返还,请重新提交"
+                    if creation.enterprise_grant_id
+                    else "服务重启时任务尚未成功提交到网关,已终止;请重新提交"
+                )
+                _refund_if_cocreation(session, creation)
                 to_fail.append(creation.id)
         session.commit()
     for creation_id in to_resume:
@@ -71,25 +77,29 @@ def recover_interrupted_creations() -> dict[str, int]:
 
 
 def reap_stale_creations() -> int:
-    """看门狗:回收长时间无心跳的生成中任务。"""
+    """看门狗:回收长时间无心跳的生成中任务(共创任务回收时返还次数)。"""
     cutoff = datetime.now(timezone.utc) - timedelta(
         seconds=settings.video_timeout_seconds + STALE_BUFFER_SECONDS
     )
     with SessionLocal() as session:
         rows = session.scalars(select(Creation).where(Creation.status.in_(ACTIVE_STATUSES))).all()
-        stale_ids = [c.id for c in rows if aware(c.updated_at) < cutoff]
-        if not stale_ids:
+        stale = [c for c in rows if aware(c.updated_at) < cutoff]
+        if not stale:
             return 0
-        session.execute(
-            update(Creation)
-            .where(Creation.id.in_(stale_ids))
-            .values(
-                status="failed",
-                error="任务长时间无进展,已被系统终止;若网关侧仍在计费,请到网关后台核对",
+        for creation in stale:
+            creation.status = "failed"
+            creation.error = (
+                "任务长时间无进展,已被系统终止;本次共创次数已自动返还"
+                if creation.enterprise_grant_id
+                else "任务长时间无进展,已被系统终止;若网关侧仍在计费,请到网关后台核对"
             )
-        )
-        session.commit()
-        return len(stale_ids)
+            try:
+                _refund_if_cocreation(session, creation)
+                session.commit()
+            except SQLAlchemyError:
+                session.rollback()
+                logger.exception("reap stale creation failed (creation %s)", creation.id)
+        return len(stale)
 
 
 def start_sweeper(stop_event: threading.Event) -> threading.Thread:
@@ -243,10 +253,33 @@ def _generate_video(session, creation: Creation, *, resume: bool = False) -> Non
     _finish(session, creation, "completed")
 
 
+def _refund_if_cocreation(session, creation: Creation) -> None:
+    """共创任务失败终态时返还消耗的次数;个人任务没有授权,直接跳过。
+
+    返还失败只记日志不抛出,保证任务终态(failed)总能落库;流水幂等,
+    后续路径(看门狗/重启恢复)不会重复返还。
+    """
+    if not creation.enterprise_grant_id:
+        return
+    try:
+        refund_video_grant(
+            session,
+            grant_id=creation.enterprise_grant_id,
+            creation_id=creation.id,
+        )
+    except Exception:  # noqa: BLE001 —— 返还失败不能挡住任务终态落库
+        logger.exception("refund cocreation grant failed (creation %s)", creation.id)
+
+
 def _finish(session, creation: Creation, status: str) -> None:
+    # 回滚会一并撤销 error/返还,重试循环里都要重放(返还按流水幂等,重复调用安全)
+    error = creation.error
     for attempt in (1, 2):
         try:
+            if status == "failed":
+                _refund_if_cocreation(session, creation)
             creation.status = status
+            creation.error = error
             session.commit()
             return
         except SQLAlchemyError:
