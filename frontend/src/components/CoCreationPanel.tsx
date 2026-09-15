@@ -150,6 +150,13 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
     }
   }
 
+  // 首帧合成只读输入框里的 text,想把扩写结果用于合拍画面就先采纳回输入框
+  const adoptExpanded = () => {
+    if (!expanded.trim()) return
+    setText(expanded.trim())
+    setExpanded('')
+  }
+
   const canComposeFrame =
     grantUsable && !!template && needsFirstFrame && (!needsPhoto || photoReady) && !framing && quotaLeft > 0
 
@@ -559,7 +566,7 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
               <textarea
                 className="big-input"
                 rows={2}
-                maxLength={500}
+                maxLength={2000}
                 placeholder="例如:清晨的咖啡店,和 IP 一起比心合影"
                 value={text}
                 onChange={(e) => setText(e.target.value)}
@@ -569,7 +576,12 @@ export default function CoCreationPanel({ status, grantId, onStatusChange }: Pro
                   <button className="btn primary" disabled={!grantUsable || !text.trim() || expanding} onClick={doExpand}>
                     {expanding ? 'AI 拓展中…' : expanded ? '重新拓展' : '✨ AI 拓展'}
                   </button>
-                  <span className="muted small">用企业网关密钥把创意扩写为视频提示词,可编辑</span>
+                  {expanded && (
+                    <button className="btn" disabled={expanding} onClick={adoptExpanded}>
+                      ✓ 采纳到创意
+                    </button>
+                  )}
+                  <span className="muted small">首帧合成和视频生成都采用上方输入框的内容</span>
                 </div>
               )}
               {expanded && (
